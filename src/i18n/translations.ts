@@ -42,6 +42,7 @@ export const translations: Record<Language, any> = {
       emptyBody: 'Be the first to share a dish and the feeling it inspired.',
       noResultsTitle: 'No matches',
       noResultsBody: 'Try a different search or tag.',
+      recipeIncluded: 'Recipe included',
     },
     inspireMe: {
       title: 'Inspire me',
@@ -157,6 +158,7 @@ export const translations: Record<Language, any> = {
       installButton: 'Install Nouriva',
       installedBody: 'Nouriva is installed on this device.',
       installIosBody: 'On iPhone/iPad: tap the Share icon in Safari, then "Add to Home Screen".',
+      installFallbackBody: 'Your browser hasn\'t offered an install prompt yet — open its menu (usually ⋮ or the address bar) and look for "Install app" or "Add to Home screen".',
       localDataHeading: 'Local data',
       draftsStored: (n: number) => `${n} draft${n === 1 ? '' : 's'} stored only in this browser.`,
       exportDrafts: 'Export drafts as JSON',
@@ -241,6 +243,7 @@ export const translations: Record<Language, any> = {
       emptyBody: '成為第一個分享料理與感受的人。',
       noResultsTitle: '沒有符合的結果',
       noResultsBody: '試試其他搜尋字詞或標籤。',
+      recipeIncluded: '附食譜',
     },
     inspireMe: {
       title: '給我靈感',
@@ -356,6 +359,7 @@ export const translations: Record<Language, any> = {
       installButton: '安裝 Nouriva',
       installedBody: 'Nouriva 已安裝於此裝置。',
       installIosBody: '在 iPhone / iPad 上：於 Safari 點擊「分享」圖示，再選擇「加入主畫面」。',
+      installFallbackBody: '你的瀏覽器尚未提供安裝提示——請開啟瀏覽器選單（通常是 ⋮ 或網址列），尋找「安裝應用程式」或「加入主畫面」。',
       localDataHeading: '本機資料',
       draftsStored: (n: number) => `此瀏覽器中儲存了 ${n} 則草稿。`,
       exportDrafts: '匯出草稿為 JSON',
@@ -440,6 +444,7 @@ export const translations: Record<Language, any> = {
       emptyBody: '成为第一个分享料理与感受的人。',
       noResultsTitle: '没有匹配的结果',
       noResultsBody: '试试其他搜索词或标签。',
+      recipeIncluded: '附食谱',
     },
     inspireMe: {
       title: '给我灵感',
@@ -555,6 +560,7 @@ export const translations: Record<Language, any> = {
       installButton: '安装 Nouriva',
       installedBody: 'Nouriva 已安装于此设备。',
       installIosBody: '在 iPhone / iPad 上：在 Safari 中点击"分享"图标，再选择"添加到主屏幕"。',
+      installFallbackBody: '你的浏览器尚未提供安装提示——请打开浏览器菜单（通常是 ⋮ 或地址栏），寻找"安装应用"或"添加到主屏幕"。',
       localDataHeading: '本地数据',
       draftsStored: (n: number) => `此浏览器中存储了 ${n} 条草稿。`,
       exportDrafts: '导出草稿为 JSON',

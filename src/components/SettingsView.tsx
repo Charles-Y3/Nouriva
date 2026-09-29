@@ -192,18 +192,24 @@ export default function SettingsView() {
             <p className="text-sm text-ink-700">{t.settings.installedBody}</p>
           ) : isIOS ? (
             <p className="text-sm text-ink-700">{t.settings.installIosBody}</p>
-          ) : (
+          ) : canInstall ? (
             <>
               <p className="text-sm text-ink-500">{t.settings.installBody}</p>
               <button
                 type="button"
-                disabled={!canInstall}
                 onClick={promptInstall}
-                className="bg-clay-600 hover:bg-clay-700 disabled:opacity-50 text-linen-50 rounded-full px-4 py-1.5 text-sm"
+                className="bg-clay-600 hover:bg-clay-700 text-linen-50 rounded-full px-4 py-1.5 text-sm"
               >
                 {t.settings.installButton}
               </button>
             </>
+          ) : (
+            // beforeinstallprompt hasn't fired — Chrome decides that on its
+            // own engagement heuristics, which a site can't force, so a
+            // disabled button with no explanation would be a dead end.
+            // Every Chromium browser still offers install from its own
+            // menu regardless of whether this event ever fires.
+            <p className="text-sm text-ink-700">{t.settings.installFallbackBody}</p>
           )}
         </div>
       </section>

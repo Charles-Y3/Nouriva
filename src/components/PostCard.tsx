@@ -23,8 +23,13 @@ export default function PostCard({ post, onOpen }: { post: Post; onOpen: (id: st
               ✨ {post.spirit_tags.map(tag => t.spiritTags[tag] || tag).join(' · ')}
             </p>
           )}
-          {post.nutrition?.calories !== undefined && (
-            <p className="mt-1.5 text-xs text-ink-500">≈{post.nutrition.calories} kcal</p>
+          {(post.ingredients || post.recipe || post.nutrition?.calories !== undefined) && (
+            <p className="mt-1.5 text-xs text-ink-500">
+              {[
+                (post.ingredients || post.recipe) && `📖 ${t.browse.recipeIncluded}`,
+                post.nutrition?.calories !== undefined && `≈${post.nutrition.calories} kcal`,
+              ].filter(Boolean).join(' · ')}
+            </p>
           )}
         </div>
       </button>
