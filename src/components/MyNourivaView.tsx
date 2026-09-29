@@ -6,6 +6,7 @@ import type { Post } from '../types';
 import ConfirmButton from './ConfirmButton';
 import EmptyState from './EmptyState';
 import PostCard from './PostCard';
+import BookletModal from './BookletModal';
 
 export default function MyNourivaView({
   onResumeDraft,
@@ -17,6 +18,7 @@ export default function MyNourivaView({
   const { drafts, deleteDraft, myPostIds } = useApp();
   const t = useT();
   const [posts, setPosts] = useState<Post[]>([]);
+  const [showBooklet, setShowBooklet] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -30,7 +32,18 @@ export default function MyNourivaView({
 
   return (
     <div className="pt-4 space-y-8">
-      <h1 className="text-xl font-semibold text-ink-900">{t.myNouriva.heading}</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-ink-900">{t.myNouriva.heading}</h1>
+        <button
+          type="button"
+          onClick={() => setShowBooklet(true)}
+          className="text-sm text-clay-700 hover:text-clay-600 underline"
+        >
+          {t.booklet.openButton}
+        </button>
+      </div>
+
+      {showBooklet && <BookletModal onClose={() => setShowBooklet(false)} />}
 
       <section>
         <h2 className="text-sm font-semibold text-ink-500 uppercase tracking-wide mb-2">{t.myNouriva.draftsHeading}</h2>

@@ -160,6 +160,16 @@ Note: Postgres's built-in text search has no real Chinese word segmentation, so 
 Chinese content is weaker than on English for now — flagged in `db/schema.sql`'s comments as worth
 revisiting if it matters more than expected.
 
+## Recipe booklet (PDF)
+
+My Nouriva → "Recipe booklet (PDF)" lets you pick any mix of posts you've shared, posts you've
+reacted to, and local drafts, and generates a PDF with one nicely laid-out page per recipe
+(photo, the reflection as a pull-quote, ingredients, method, spirit tags). Generated entirely
+client-side — `@react-pdf/renderer` is lazy-loaded only when you actually generate one, so it
+never adds to the app's normal load. Chinese content gets a CJK-capable font (Noto Sans SC/TC,
+fetched from a CDN on demand) registered automatically based on your selected language; English
+uses the built-in font with no extra download. See `src/services/recipeBooklet.tsx`.
+
 ## Out of scope / not built (v1)
 
 - Multiple AI providers (Gemini only)
