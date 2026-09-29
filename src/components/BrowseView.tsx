@@ -28,31 +28,22 @@ export default function BrowseView({
   const [browsing, setBrowsing] = useState(false);
   const [showInspire, setShowInspire] = useState(false);
 
+  // Debounced: re-runs whenever the query or tag changes, including back to
+  // both empty — that "back to empty" case must re-fetch the plain recent
+  // feed itself (not just flip `browsing` off) or `posts` is left stuck on
+  // whatever the last filtered/searched result set was, which is exactly
+  // what made clicking "All" after a tag filter look like it did nothing.
   useEffect(() => {
     if (!isSupabaseConfigured()) {
       setError('not_configured');
       return;
     }
-    fetchRecentPosts(12)
-      .then(setPosts)
-      .catch(() => setError('load_failed'));
-  }, []);
-
-  // Debounced search/filter — runs whenever the query or tag changes, once
-  // either is non-empty; reverts to the plain "recent" feed when both are
-  // cleared again.
-  useEffect(() => {
-    if (!isSupabaseConfigured()) return;
-    if (!query.trim() && !activeTag) {
-      setBrowsing(false);
-      return;
-    }
-    setBrowsing(true);
+    const isFilteringNow = Boolean(query.trim() || activeTag);
+    setBrowsing(isFilteringNow);
     const handle = setTimeout(() => {
-      searchPosts(query, activeTag)
-        .then(setPosts)
-        .catch(() => setError('load_failed'));
-    }, 300);
+      const fetch = isFilteringNow ? searchPosts(query, activeTag) : fetchRecentPosts(12);
+      fetch.then(setPosts).catch(() => setError('load_failed'));
+    }, isFilteringNow ? 300 : 0);
     return () => clearTimeout(handle);
   }, [query, activeTag]);
 

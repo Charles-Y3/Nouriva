@@ -20,6 +20,8 @@ export const translations: Record<Language, any> = {
       delete: 'Delete',
       loading: 'Loading…',
       confirmYes: 'Yes',
+      decreaseFontSize: 'Decrease text size',
+      increaseFontSize: 'Increase text size',
     },
     nav: {
       browse: 'Browse',
@@ -221,6 +223,8 @@ export const translations: Record<Language, any> = {
       delete: '刪除',
       loading: '載入中…',
       confirmYes: '是',
+      decreaseFontSize: '縮小文字',
+      increaseFontSize: '放大文字',
     },
     nav: {
       browse: '瀏覽',
@@ -422,6 +426,8 @@ export const translations: Record<Language, any> = {
       delete: '删除',
       loading: '加载中…',
       confirmYes: '是',
+      decreaseFontSize: '缩小文字',
+      increaseFontSize: '放大文字',
     },
     nav: {
       browse: '浏览',

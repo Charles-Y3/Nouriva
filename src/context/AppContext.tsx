@@ -15,6 +15,17 @@ function detectDefaultLanguage(): Language {
 const DEFAULT_PREFERENCES: UserPreferences = {
   completedIntro: false,
   language: detectDefaultLanguage(),
+  fontSize: 'md',
+};
+
+// rem-based Tailwind classes scale off the root font-size, so this one
+// line is enough to resize the entire app proportionally — same approach
+// living-in-harmony uses for its font-size preference.
+const FONT_SIZE_PX: Record<UserPreferences['fontSize'], string> = {
+  sm: '14px',
+  md: '16px',
+  lg: '18px',
+  xl: '20px',
 };
 
 interface AppContextType {
@@ -99,6 +110,10 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       }
     }
   }, [preferences]);
+
+  useEffect(() => {
+    document.documentElement.style.fontSize = FONT_SIZE_PX[preferences.fontSize];
+  }, [preferences.fontSize]);
 
   useEffect(() => {
     localStorage.setItem('nouriva_drafts', JSON.stringify(drafts));

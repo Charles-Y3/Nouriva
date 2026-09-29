@@ -10,6 +10,9 @@ export type SpiritTag = typeof SPIRIT_TAGS[number];
 
 export type ReactionType = 'felt' | 'inspired' | 'thanks';
 
+export const FONT_SIZES = ['sm', 'md', 'lg', 'xl'] as const;
+export type FontSize = typeof FONT_SIZES[number];
+
 export interface NutritionEstimate {
   calories?: number;
   carbsGrams?: number;
@@ -63,6 +66,7 @@ export interface MyPostRef {
 export interface UserPreferences {
   completedIntro: boolean;
   language: Language;
+  fontSize: FontSize;
   // Ciphertext (passphrase-encrypted, see services/keyEncryption.ts) —
   // persisted in nouriva_preferences, travels with any future data export.
   geminiKeyEncrypted?: string;
