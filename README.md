@@ -68,6 +68,17 @@ neither Supabase nor a Gemini key set up.
 
 ## Moderation
 
+Before a post can be shared, `src/utils/contentFilter.ts`'s keyword denylist blocks the most
+unambiguous cases (slurs, explicit profanity) with an inline error, and the same list backs a
+Postgres CHECK constraint (see `db/schema.sql`) so a request that bypasses the UI entirely can't
+slip through either. This is a blunt, always-on baseline that needs no AI key — it can't catch
+anything requiring judgment (illegal activity described in clean language, non-slur harassment,
+misinformation), which is what report + admin review remain for. Sharing also requires an explicit
+"share this publicly?" confirmation that states up front there's no self-service takedown
+afterward — deliberate: without accounts, there's no reliable way to prove who authored a post, so
+an anon-callable "delete your own post" action would just be a public delete button anyone could
+use on anyone's post.
+
 Anyone can report a post from its detail page. There's no in-app admin UI in v1 — moderate via
 `curl` against the secret-gated `/api/admin/*` routes, using the `ADMIN_SECRET` you set:
 
@@ -118,15 +129,19 @@ for OS icon masking) since the source is a flat JPEG with no real transparency.
   any), and the reaction/report counters. There is no account system and no server-side record of
   who published what beyond a purely local list on your own device (`My Nouriva`).
 
-Because published posts already live in Supabase, clearing this browser's storage never loses
-anything you've shared — only in-progress drafts are at risk. Settings offers two ways to protect
-those too: a manual "Export/Import drafts as JSON" (works everywhere, including iOS Safari), and
-on Chromium desktop browsers, "auto-backup to a folder" — pick a folder once and every draft
-change silently overwrites one JSON file there via the File System Access API, so drafts survive
-even a full browser storage wipe. Choosing that folder again after a wipe both restores the data
-and re-arms auto-save in one step. See `src/utils/folderBackup.ts` for exactly how (and its
-limits — it's Chromium-only, and the permission it holds can be silently revoked by the browser,
-in which case auto-save just stops rather than erroring).
+Because published posts already live in Supabase, clearing this browser's storage never deletes
+the posts themselves — but it does lose in-progress drafts, and your device's own record of which
+posts are yours (`My Nouriva`'s "Shared by you" list is purely local, so a wipe makes those posts
+just look like anyone else's — you can't get that list back by asking Supabase who you are, since
+there's no accounts). Settings offers two ways to protect all of that: a manual "Export/Import
+local data as JSON" (works everywhere, including iOS Safari; covers drafts, the "Shared by you"
+list, and your reaction/report history), and on Chromium desktop browsers, "auto-backup to a
+folder" — pick a folder once and every change silently overwrites one JSON file there via the File
+System Access API, so it all survives even a full browser storage wipe. Choosing that folder again
+after a wipe both restores the data and re-arms auto-save in one step. See `src/utils/backup.ts`
+and `src/utils/folderBackup.ts` for exactly how (and the latter's limits — it's Chromium-only, and
+the permission it holds can be silently revoked by the browser, in which case auto-save just stops
+rather than erroring).
 
 If you have unprotected drafts (folder auto-backup isn't on) that have sat around for a few days,
 a small dismissible reminder nudges you to back them up — "Back up now" triggers the same

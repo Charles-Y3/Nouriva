@@ -6,6 +6,8 @@ import { isSupabaseConfigured } from '../../services/supabase';
 import { createPost } from '../../services/postsApi';
 import { uploadPhoto } from '../../services/photoUpload';
 import { deleteDraftPhoto, getDraftPhoto } from '../../services/localDrafts';
+import { containsBlockedContent } from '../../utils/contentFilter';
+import ConfirmButton from '../ConfirmButton';
 
 export default function StepShare({
   draft,
@@ -56,6 +58,7 @@ export default function StepShare({
   }
 
   const configured = isSupabaseConfigured();
+  const blocked = containsBlockedContent(draft.dishName, draft.reflection, draft.ingredients, draft.recipe);
 
   return (
     <div>
@@ -78,21 +81,33 @@ export default function StepShare({
         </div>
       </div>
 
-      {!configured && <p className="mt-4 text-sm text-clay-700">{t.create.share.notConfigured}</p>}
+      <p className="mt-4 text-xs text-ink-500">{t.create.share.irreversibleNote}</p>
+
+      {!configured && <p className="mt-2 text-sm text-clay-700">{t.create.share.notConfigured}</p>}
+      {blocked && <p className="mt-2 text-sm text-clay-700">{t.create.share.blockedContent}</p>}
       {error && <p className="mt-4 text-sm text-clay-700">{error}</p>}
 
-      <div className="mt-6 flex justify-between">
+      <div className="mt-6 flex justify-between items-center">
         <button type="button" onClick={onBack} className="text-sm text-ink-500 hover:text-ink-900 px-2 py-2.5">
           {t.common.back}
         </button>
-        <button
-          type="button"
-          disabled={publishing || !configured}
-          onClick={share}
-          className="bg-clay-600 hover:bg-clay-700 disabled:opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
-        >
-          {publishing ? t.create.share.sharing : t.create.share.shareButton}
-        </button>
+        {publishing ? (
+          <button
+            type="button"
+            disabled
+            className="bg-clay-600 opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
+          >
+            {t.create.share.sharing}
+          </button>
+        ) : (
+          <ConfirmButton
+            label={t.create.share.shareButton}
+            prompt={t.create.share.shareConfirmPrompt}
+            onConfirm={share}
+            disabled={!configured || blocked}
+            className="bg-clay-600 hover:bg-clay-700 disabled:opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
+          />
+        )}
       </div>
     </div>
   );

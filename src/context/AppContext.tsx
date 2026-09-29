@@ -177,11 +177,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Used by Settings' "Import drafts" (JSON file) and "Restore from
   // folder" — merges rather than replaces preferences (so a restored
   // backup can't accidentally wipe, say, a language choice it predates),
-  // but replaces the draft list wholesale (drafts have stable ids, so a
-  // restore is meant to bring the device back to exactly that snapshot).
-  const applyBackup = (backup: { drafts?: Draft[]; preferences?: Partial<UserPreferences> }) => {
+  // but replaces drafts/myPostIds/reactionsGiven/reportsGiven wholesale
+  // (all have stable ids, so a restore is meant to bring the device back
+  // to exactly that snapshot). myPostIds in particular is what "Shared by
+  // you" in My Nouriva reads from — a backup taken before this field
+  // existed just won't include it, so that section stays whatever it
+  // already was rather than getting cleared.
+  const applyBackup = (backup: {
+    drafts?: Draft[];
+    preferences?: Partial<UserPreferences>;
+    myPostIds?: MyPostRef[];
+    reactionsGiven?: string[];
+    reportsGiven?: string[];
+  }) => {
     if (backup.drafts) setDrafts(backup.drafts);
     if (backup.preferences) setPreferencesState(prev => ({ ...prev, ...backup.preferences }));
+    if (backup.myPostIds) setMyPostIds(backup.myPostIds);
+    if (backup.reactionsGiven) setReactionsGiven(new Set(backup.reactionsGiven));
+    if (backup.reportsGiven) setReportsGiven(new Set(backup.reportsGiven));
   };
 
   const resetAllLocalData = () => {

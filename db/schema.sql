@@ -150,3 +150,31 @@ end;
 $$;
 
 grant execute on function report_post(uuid) to anon;
+
+-- 4. Baseline content filter (defense-in-depth) -----------------------
+
+-- Mirrors src/utils/contentFilter.ts's denylist — that client-side check
+-- is what a normal user actually sees (an inline error before Share is
+-- even clickable), but nothing stops a request that bypasses the UI
+-- entirely and calls the REST API directly with the anon key. This CHECK
+-- constraint is the backstop for that case. It's a blunt keyword list, not
+-- real moderation — report + the admin routes in api/_app.ts remain the
+-- actual mechanism for anything this can't catch (see README's
+-- "Moderation" section). Safe to re-run: the guard below skips re-adding
+-- the constraint if it already exists.
+do $$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'posts_no_blocked_content') then
+    alter table posts add constraint posts_no_blocked_content check (
+      lower(
+        coalesce(dish_name, '') || ' ' || coalesce(description, '') || ' ' ||
+        coalesce(reflection, '') || ' ' || coalesce(ingredients, '') || ' ' ||
+        coalesce(recipe, '')
+      ) !~ (
+        'fuck|shit|bitch|asshole|bastard|cunt|dick|piss|' ||
+        'nigger|nigga|faggot|retard|whore|slut|rape|kill\s*yourself|kys|' ||
+        '操你|傻逼|傻屄|婊子|賤人|贱人|白痴|智障|死全家|干你娘|幹你娘'
+      )
+    );
+  end if;
+end $$;

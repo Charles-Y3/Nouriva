@@ -10,11 +10,13 @@ export default function ConfirmButton({
   prompt,
   onConfirm,
   className = 'text-xs text-ink-500 hover:text-clay-700',
+  disabled = false,
 }: {
   label: string;
   prompt: string;
   onConfirm: () => void;
   className?: string;
+  disabled?: boolean;
 }) {
   const t = useT();
   const [confirming, setConfirming] = useState(false);
@@ -41,7 +43,12 @@ export default function ConfirmButton({
   }
 
   return (
-    <button type="button" onClick={() => setConfirming(true)} className={className}>
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={() => setConfirming(true)}
+      className={`${className} disabled:opacity-50 disabled:cursor-not-allowed`}
+    >
       {label}
     </button>
   );

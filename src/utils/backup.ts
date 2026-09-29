@@ -1,11 +1,19 @@
-import type { Draft, UserPreferences } from '../types';
+import type { Draft, MyPostRef, UserPreferences } from '../types';
 
 export interface NourivaBackup {
   app: 'nouriva';
-  schema: 1;
+  schema: 1 | 2;
   exportedAt: string;
   drafts: Draft[];
   preferences: Omit<UserPreferences, 'customGeminiApiKey'>;
+  // Added in schema 2 — a backup built before this only restored drafts and
+  // preferences, so a storage wipe silently lost "Shared by you" (the
+  // local record of which posts this device published) and the per-device
+  // reaction/report de-dupe sets. Optional so old backup files still import
+  // cleanly, just without these fields.
+  myPostIds?: MyPostRef[];
+  reactionsGiven?: string[];
+  reportsGiven?: string[];
 }
 
 // Builds one canonical backup shape read directly from localStorage, used
@@ -16,12 +24,18 @@ export interface NourivaBackup {
 export function buildBackup(): NourivaBackup {
   const drafts: Draft[] = JSON.parse(localStorage.getItem('nouriva_drafts') || '[]');
   const preferences = JSON.parse(localStorage.getItem('nouriva_preferences') || '{}');
+  const myPostIds: MyPostRef[] = JSON.parse(localStorage.getItem('nouriva_my_posts') || '[]');
+  const reactionsGiven: string[] = JSON.parse(localStorage.getItem('nouriva_reactions_given') || '[]');
+  const reportsGiven: string[] = JSON.parse(localStorage.getItem('nouriva_reports_given') || '[]');
   return {
     app: 'nouriva',
-    schema: 1,
+    schema: 2,
     exportedAt: new Date().toISOString(),
     drafts,
     preferences,
+    myPostIds,
+    reactionsGiven,
+    reportsGiven,
   };
 }
 
