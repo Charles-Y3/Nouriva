@@ -1,0 +1,15 @@
+{
+  "short_name": "Nouriva",
+  "name": "Nouriva — Nourish the body. Elevate the spirit.",
+  "icons": [
+    { "src": "/icon-192.png", "type": "image/png", "sizes": "192x192", "purpose": "any" },
+    { "src": "/icon-512.png", "type": "image/png", "sizes": "512x512", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "type": "image/png", "sizes": "512x512", "purpose": "maskable" }
+  ],
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#a8623f",
+  "background_color": "#fbf7f0"
+}
