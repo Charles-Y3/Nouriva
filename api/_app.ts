@@ -2,7 +2,7 @@ import express from "express";
 import { put, del } from "@vercel/blob";
 import { createClient } from "@supabase/supabase-js";
 import { createHash, timingSafeEqual } from "node:crypto";
-import { findDietViolation } from "./_dietFilter";
+import { findDietViolation } from "./_dietFilter.js";
 
 // All API route handlers, as a standalone Express app with no listen()/Vite/
 // static-file serving of its own — shared by two hosts:
