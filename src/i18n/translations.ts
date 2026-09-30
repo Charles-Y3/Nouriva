@@ -134,6 +134,8 @@ export const translations: Record<Language, any> = {
       },
     },
     aiAssist: {
+      badReply: "The model replied, but not in a form the app could use. Try again.",
+      providerError: (status: number | undefined, detail: string) => `The AI provider returned an error${status ? ` (${status})` : ''}: ${detail}`,
       improve: 'Improve writing',
       improving: 'Improving…',
       express: 'Help me express this',
@@ -266,6 +268,11 @@ export const translations: Record<Language, any> = {
       hide: "Close",
     },
     booklet: {
+      readyTitle: "Your booklet is ready",
+      readyBody: "It opened in a new tab. If nothing opened, use the links below.",
+      openPdf: "Open PDF",
+      downloadPdf: "Download PDF",
+      generateAgain: "Generate again",
       defaultTitle: "My Nouriva kitchen",
       titleLabel: "Booklet title",
       dedicationLabel: "Dedication (optional)",
@@ -435,6 +442,8 @@ export const translations: Record<Language, any> = {
       },
     },
     aiAssist: {
+      badReply: "模型有回覆，但格式無法使用。請再試一次。",
+      providerError: (status: number | undefined, detail: string) => `AI 服務回傳錯誤${status ? `（${status}）` : ''}：${detail}`,
       improve: '潤飾文字',
       improving: '潤飾中…',
       express: '協助我表達',
@@ -567,6 +576,11 @@ export const translations: Record<Language, any> = {
       hide: "收起",
     },
     booklet: {
+      readyTitle: "你的食譜小冊已完成",
+      readyBody: "已在新分頁開啟。如果沒有開啟，請使用下方連結。",
+      openPdf: "開啟 PDF",
+      downloadPdf: "下載 PDF",
+      generateAgain: "重新產生",
       defaultTitle: "我的 Nouriva 廚房",
       titleLabel: "小冊標題",
       dedicationLabel: "獻詞（選填）",
@@ -736,6 +750,8 @@ export const translations: Record<Language, any> = {
       },
     },
     aiAssist: {
+      badReply: "模型有回复，但格式无法使用。请再试一次。",
+      providerError: (status: number | undefined, detail: string) => `AI 服务返回错误${status ? `（${status}）` : ''}：${detail}`,
       improve: '润色文字',
       improving: '润色中…',
       express: '协助我表达',
@@ -868,6 +884,11 @@ export const translations: Record<Language, any> = {
       hide: "收起",
     },
     booklet: {
+      readyTitle: "你的食谱小册已完成",
+      readyBody: "已在新标签页打开。如果没有打开，请使用下方链接。",
+      openPdf: "打开 PDF",
+      downloadPdf: "下载 PDF",
+      generateAgain: "重新生成",
       defaultTitle: "我的 Nouriva 厨房",
       titleLabel: "小册标题",
       dedicationLabel: "献词（选填）",

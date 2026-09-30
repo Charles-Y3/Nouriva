@@ -121,6 +121,28 @@ async function callChatCompletion(config: AiConfig, system: string, userContent:
   return data?.choices?.[0]?.message?.content || '{}';
 }
 
+// Models are loose about key names and types; accept the common variants and
+// coerce, but require an actual dish name.
+function normalizeFood(raw: any) {
+  const text = (v: unknown) => (Array.isArray(v) ? v.join("\n") : typeof v === "string" ? v : undefined);
+  const num = (v: unknown) => {
+    const n = typeof v === "string" ? parseFloat(v) : v;
+    return typeof n === "number" && Number.isFinite(n) ? n : undefined;
+  };
+  const dishName = text(raw?.dishName ?? raw?.dish_name ?? raw?.name ?? raw?.dish)?.trim();
+  if (!dishName) throw new Error("no dish name in reply");
+  return {
+    dishName,
+    ingredients: text(raw.ingredients),
+    recipe: text(raw.recipe ?? raw.method),
+    calories: num(raw.calories),
+    carbsGrams: num(raw.carbsGrams ?? raw.carbs),
+    proteinGrams: num(raw.proteinGrams ?? raw.protein),
+    fatGrams: num(raw.fatGrams ?? raw.fat),
+    fiberGrams: num(raw.fiberGrams ?? raw.fiber),
+  };
+}
+
 export function createApiApp() {
   const app = express();
 
@@ -161,13 +183,33 @@ export function createApiApp() {
     res.json({ status: "ok", time: new Date().toISOString() });
   });
 
-  function handleAiError(err: any, res: express.Response, failedMessage: string) {
+  // Tells the client WHY an AI call failed, so it doesn't have to guess:
+  //  - RATE_LIMITED   provider said slow down
+  //  - NO_VISION      the provider itself rejected the image / content format
+  //                   (only ever inferred from the provider's own error, and
+  //                   only for requests that carried an image)
+  //  - PROVIDER_ERROR any other HTTP error from the provider (status + text)
+  //  - BAD_REPLY      the model DID answer, but not in a usable form
+  function handleAiError(err: any, res: express.Response, failedMessage: string, withImage = false) {
     console.error("AI error:", err);
     const msg = String(err?.message || '');
     if (err?.status === 429 || /quota|rate limit/i.test(msg)) {
       return res.status(429).json({ error: "Rate limited", code: "RATE_LIMITED", details: msg });
     }
-    res.status(500).json({ error: failedMessage, details: msg });
+    if (typeof err?.status === 'number') {
+      const rejectsImage = withImage && [400, 404, 415, 422].includes(err.status)
+        && /image|vision|multimodal|multi-modal|modalit|image_url|content.*(string|array)/i.test(msg);
+      return res.status(502).json({
+        error: failedMessage,
+        code: rejectsImage ? "NO_VISION" : "PROVIDER_ERROR",
+        providerStatus: err.status,
+        details: msg.slice(0, 300),
+      });
+    }
+    if (err?.code === 'BAD_REPLY' || err instanceof SyntaxError) {
+      return res.status(502).json({ error: failedMessage, code: "BAD_REPLY", details: "The model replied, but not in a usable format." });
+    }
+    res.status(500).json({ error: failedMessage, details: msg.slice(0, 300) });
   }
 
   // Single flexible AI-assist endpoint. Every action shares the same
@@ -286,12 +328,26 @@ export function createApiApp() {
 
       const systemInstruction = `You are a careful assistant identifying a single vegetarian dish from a photo, for the app Nouriva. Name the specific dish, list its likely main ingredients, sketch a short rough method, and estimate calories/macros for the quantity visible (using scale cues like the plate/bowl size; account for likely hidden ingredients such as cooking oil or dressing rather than only what's directly visible — when uncertain, prefer a realistic middle estimate). Everything here is a starting draft the person will review and edit themselves, not a final answer — keep it concise and plausible rather than exhaustive. Return ONLY a strict JSON object, no markdown, no commentary: { "dishName": string, "ingredients": string (short newline-separated list), "recipe": string (2-4 sentence rough method), "calories": number, "carbsGrams": number, "proteinGrams": number, "fatGrams": number, "fiberGrams": number }.${languageInstruction(language)}`;
 
-      const content = await callChatCompletion(config, systemInstruction, [
-        { type: 'text', text: 'Identify this dish and draft the fields described.' },
-        { type: 'image_url', image_url: { url: `data:${detectedMime};base64,${cleanBase64}` } },
-      ]);
-
-      const parsed = extractJson(content);
+      // The model may answer with prose, stray keys or an empty reply; try
+      // once more before calling it a bad reply. Anything the provider itself
+      // rejects (HTTP error) is thrown straight through instead.
+      let parsed: any;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const content = await callChatCompletion(config, systemInstruction, [
+          { type: 'text', text: 'Identify this dish and draft the fields described.' },
+          { type: 'image_url', image_url: { url: `data:${detectedMime};base64,${cleanBase64}` } },
+        ]);
+        try {
+          parsed = normalizeFood(extractJson(content));
+          break;
+        } catch {
+          if (attempt === 1) {
+            const bad: any = new Error('The model replied, but not in a usable format');
+            bad.code = 'BAD_REPLY';
+            throw bad;
+          }
+        }
+      }
       res.json({
         dishName: parsed.dishName,
         ingredients: parsed.ingredients,
@@ -306,7 +362,7 @@ export function createApiApp() {
         },
       });
     } catch (err: any) {
-      handleAiError(err, res, "Food identification failed");
+      handleAiError(err, res, "Food identification failed", true);
     }
   });
 

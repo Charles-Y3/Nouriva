@@ -2,7 +2,8 @@ import { useRef, useState } from 'react';
 import type { Draft } from '../../types';
 import { useT } from '../../hooks/useT';
 import { blobToDataUrl, downscaleImage, saveDraftPhoto, deleteDraftPhoto, getDraftPhoto } from '../../services/localDrafts';
-import { identifyFood, AiAssistError } from '../../services/aiService';
+import { identifyFood } from '../../services/aiService';
+import { aiErrorMessage } from '../../utils/aiErrorMessage';
 import { isAiConsentShown, markAiConsentShown } from '../../services/aiConsent';
 import ConsentNotice from '../ConsentNotice';
 import NutritionFields from './NutritionFields';
@@ -72,13 +73,7 @@ export default function StepPhoto({
         nutrition: result.nutrition,
       });
     } catch (err) {
-      // An 'unknown' failure is most often a provider rejecting the image
-      // (text-only model), so point at the model rather than a bare failure.
-      setIdentifyError(
-        err instanceof AiAssistError && err.reason === 'no_api_key' ? t.aiAssist.noKey
-        : err instanceof AiAssistError && err.reason === 'unknown' ? t.create.photo.visionFailed
-        : t.aiAssist.failed
-      );
+      setIdentifyError(aiErrorMessage(err, t));
     } finally {
       setIdentifying(false);
     }

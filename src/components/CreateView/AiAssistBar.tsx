@@ -2,7 +2,8 @@ import { useState } from 'react';
 import ConsentNotice from '../ConsentNotice';
 import { useT } from '../../hooks/useT';
 import { isAiConsentShown, markAiConsentShown } from '../../services/aiConsent';
-import { AiAssistError, helpExpressExperience, improveWriting, suggestSpiritTags, suggestTitle } from '../../services/aiService';
+import { aiErrorMessage } from '../../utils/aiErrorMessage';
+import { helpExpressExperience, improveWriting, suggestSpiritTags, suggestTitle } from '../../services/aiService';
 import { SPIRIT_TAGS } from '../../types';
 
 type Action = 'improve_writing' | 'help_express' | 'suggest_title' | 'suggest_tags';
@@ -40,11 +41,7 @@ export default function AiAssistBar({
     try {
       await fn();
     } catch (err) {
-      if (err instanceof AiAssistError) {
-        setError(err.reason === 'no_api_key' ? t.aiAssist.noKey : err.reason === 'rate_limited' ? t.aiAssist.rateLimited : err.message);
-      } else {
-        setError(t.aiAssist.failed);
-      }
+      setError(aiErrorMessage(err, t));
     } finally {
       setPending(null);
     }

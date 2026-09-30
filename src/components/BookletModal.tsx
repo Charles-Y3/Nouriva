@@ -27,6 +27,12 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
   const [loadingPools, setLoadingPools] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [generating, setGenerating] = useState(false);
+  // Set once the PDF exists: the modal then shows it as ready, with Open and
+  // Download links, instead of silently dropping a file into Downloads.
+  // (Blob URLs are left un-revoked on purpose: an already-open viewer tab may
+  // still need its blob for the toolbar's own Save button.)
+  const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const pdfName = `nouriva-recipes-${new Date().toISOString().slice(0, 10)}.pdf`;
   const [error, setError] = useState<string | null>(null);
   const [title, setTitle] = useState('');
   const [dedication, setDedication] = useState('');
@@ -78,6 +84,11 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
   async function generate() {
     setGenerating(true);
     setError(null);
+    // Popup blockers only allow a new tab opened synchronously from the click,
+    // not after the (slow) PDF build — so reserve the tab now and point it at
+    // the PDF when it's done. If it's blocked, the ready panel's Open link is
+    // the fallback.
+    const viewer = window.open('', '_blank');
     try {
       const items: BookletItem[] = [];
 
@@ -142,13 +153,10 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
       });
 
       const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `nouriva-recipes-${new Date().toISOString().slice(0, 10)}.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-      onClose();
+      setPdfUrl(url);
+      if (viewer) viewer.location.href = url;
     } catch {
+      viewer?.close();
       setError(t.booklet.generateFailed);
     } finally {
       setGenerating(false);
@@ -273,6 +281,21 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
 
         {error && <p className="text-sm text-clay-700 mb-3">{error}</p>}
 
+        {pdfUrl && (
+          <div className="mb-3 rounded-xl border border-sage-400 bg-sage-500/10 p-3 text-sm">
+            <p className="font-medium text-ink-900">{t.booklet.readyTitle}</p>
+            <p className="mt-0.5 text-ink-700">{t.booklet.readyBody}</p>
+            <div className="mt-2 flex flex-wrap gap-x-5 gap-y-1">
+              <a href={pdfUrl} target="_blank" rel="noopener noreferrer" className="text-clay-700 hover:text-clay-600 underline">
+                {t.booklet.openPdf}
+              </a>
+              <a href={pdfUrl} download={pdfName} className="text-clay-700 hover:text-clay-600 underline">
+                {t.booklet.downloadPdf}
+              </a>
+            </div>
+          </div>
+        )}
+
         <div className="mt-4 flex justify-end">
           <button
             type="button"
@@ -280,7 +303,7 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
             onClick={generate}
             className="bg-clay-600 hover:bg-clay-700 disabled:opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
           >
-            {generating ? t.booklet.generating : t.booklet.generateButton(selected.size)}
+            {generating ? t.booklet.generating : pdfUrl ? t.booklet.generateAgain : t.booklet.generateButton(selected.size)}
           </button>
         </div>
       </div>

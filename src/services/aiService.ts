@@ -1,13 +1,15 @@
 import { decryptForDevice } from './deviceKeyStore';
 import type { NutritionEstimate } from '../types';
 
-export type AiUnavailableReason = 'no_api_key' | 'rate_limited' | 'network' | 'diet' | 'unknown';
+export type AiUnavailableReason = 'no_api_key' | 'rate_limited' | 'network' | 'diet' | 'no_vision' | 'provider' | 'bad_reply' | 'unknown';
 
 export class AiAssistError extends Error {
   reason: AiUnavailableReason;
-  constructor(reason: AiUnavailableReason, message: string) {
+  status?: number; // the AI provider's own HTTP status, for 'provider' / 'no_vision'
+  constructor(reason: AiUnavailableReason, message: string, status?: number) {
     super(message);
     this.reason = reason;
+    this.status = status;
     this.name = 'AiAssistError';
   }
 }
@@ -61,6 +63,15 @@ async function postJson(endpoint: string, body: Record<string, unknown>): Promis
     }
     if (payload.code === 'DIET_VIOLATION') {
       throw new AiAssistError('diet', 'Could not find a suggestion that fits the vegetarian guidelines.');
+    }
+    if (payload.code === 'NO_VISION') {
+      throw new AiAssistError('no_vision', payload.details || 'The model does not accept images.', payload.providerStatus);
+    }
+    if (payload.code === 'PROVIDER_ERROR') {
+      throw new AiAssistError('provider', payload.details || 'The AI provider returned an error.', payload.providerStatus);
+    }
+    if (payload.code === 'BAD_REPLY') {
+      throw new AiAssistError('bad_reply', payload.details || 'The model replied in an unusable format.');
     }
     if (res.status === 429) {
       throw new AiAssistError('rate_limited', 'The AI service is rate-limited right now — try again shortly.');
