@@ -1,5 +1,5 @@
 // Blunt, always-on baseline moderation — no AI key required, so it works
-// even for visitors who haven't configured Gemini. Blocks the most
+// even for visitors who haven't configured an AI provider. Blocks the most
 // unambiguous cases (slurs, explicit profanity) before a post ever reaches
 // the network; the same list also backs a Postgres CHECK constraint (see
 // db/schema.sql) as defense-in-depth against a request that bypasses the

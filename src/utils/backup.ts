@@ -5,7 +5,7 @@ export interface NourivaBackup {
   schema: 1 | 2;
   exportedAt: string;
   drafts: Draft[];
-  preferences: Omit<UserPreferences, 'customGeminiApiKey'>;
+  preferences: Omit<UserPreferences, 'customAiProvider'>;
   // Added in schema 2 — a backup built before this only restored drafts and
   // preferences, so a storage wipe silently lost "Shared by you" (the
   // local record of which posts this device published) and the per-device
@@ -19,7 +19,7 @@ export interface NourivaBackup {
 // Builds one canonical backup shape read directly from localStorage, used
 // by both the manual Export button and folder auto-save (folderBackup.ts)
 // so the two paths can't diverge. Deliberately excludes
-// nouriva_gemini_api_key_local (device-wrapped ciphertext) — it's not
+// nouriva_ai_provider_local (device-wrapped ciphertext) — it's not
 // portable across devices, same reasoning as living-in-harmony's backup.ts.
 export function buildBackup(): NourivaBackup {
   const drafts: Draft[] = JSON.parse(localStorage.getItem('nouriva_drafts') || '[]');

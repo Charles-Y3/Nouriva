@@ -91,23 +91,34 @@ export default function StepShare({
         <button type="button" onClick={onBack} className="text-sm text-ink-500 hover:text-ink-900 px-2 py-2.5">
           {t.common.back}
         </button>
-        {publishing ? (
-          <button
-            type="button"
-            disabled
-            className="bg-clay-600 opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
-          >
-            {t.create.share.sharing}
-          </button>
-        ) : (
-          <ConfirmButton
-            label={t.create.share.shareButton}
-            prompt={t.create.share.shareConfirmPrompt}
-            onConfirm={share}
-            disabled={!configured || blocked}
-            className="bg-clay-600 hover:bg-clay-700 disabled:opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
-          />
-        )}
+        <div className="flex items-center gap-3">
+          {!publishing && (
+            // The draft is already saved on every field edit (see
+            // CreateView's update()) — this button is really just a clear,
+            // discoverable "I'm done for now, don't publish" exit rather
+            // than new persistence logic.
+            <button type="button" onClick={onDone} className="text-sm text-ink-500 hover:text-ink-900 underline">
+              {t.create.share.saveForLater}
+            </button>
+          )}
+          {publishing ? (
+            <button
+              type="button"
+              disabled
+              className="bg-clay-600 opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
+            >
+              {t.create.share.sharing}
+            </button>
+          ) : (
+            <ConfirmButton
+              label={t.create.share.shareButton}
+              prompt={t.create.share.shareConfirmPrompt}
+              onConfirm={share}
+              disabled={!configured || blocked}
+              className="bg-clay-600 hover:bg-clay-700 disabled:opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
+            />
+          )}
+        </div>
       </div>
     </div>
   );

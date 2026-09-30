@@ -52,7 +52,7 @@ const AppContext = createContext<AppContextType | undefined>(undefined);
 export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [preferences, setPreferencesState] = useState<UserPreferences>(() => {
     const saved = localStorage.getItem('nouriva_preferences');
-    // The unlocked Gemini key's convenience copy lives in its own
+    // The unlocked AI provider config's convenience copy lives in its own
     // localStorage slot (see the mount effect + save effect below) —
     // deliberately NOT part of this blob, so it's never swept into a future
     // local-data export and survives closing the app without needing the
@@ -81,32 +81,34 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   });
 
   // One-time on mount: unwrap the device-encrypted convenience copy of the
-  // Gemini key, if one was saved on a previous visit. Async (IndexedDB +
-  // Web Crypto), so it can't happen in the useState initializer above.
+  // AI provider config, if one was saved on a previous visit. Async
+  // (IndexedDB + Web Crypto), so it can't happen in the useState
+  // initializer above.
   useEffect(() => {
-    const wrapped = localStorage.getItem('nouriva_gemini_api_key_local');
+    const wrapped = localStorage.getItem('nouriva_ai_provider_local');
     if (!wrapped) return;
     decryptForDevice(wrapped).then(plain => {
-      if (plain) setPreferencesState(prev => ({ ...prev, customGeminiApiKey: plain }));
+      if (plain) setPreferencesState(prev => ({ ...prev, customAiProvider: JSON.parse(plain) }));
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // customGeminiApiKey (plaintext) is deliberately excluded from what's
-  // written to nouriva_preferences — only geminiKeyEncrypted (ciphertext)
-  // is persisted there. The plaintext instead gets wrapped with a
-  // device-bound, non-extractable key and stored in its own
-  // nouriva_gemini_api_key_local slot — never in the clear.
+  // customAiProvider (plaintext {baseUrl, apiKey, model}) is deliberately
+  // excluded from what's written to nouriva_preferences — only
+  // aiProviderEncrypted (ciphertext) is persisted there. The plaintext
+  // instead gets JSON-stringified, wrapped with a device-bound,
+  // non-extractable key and stored in its own nouriva_ai_provider_local
+  // slot — never in the clear.
   useEffect(() => {
-    const { customGeminiApiKey, ...persistable } = preferences;
+    const { customAiProvider, ...persistable } = preferences;
     localStorage.setItem('nouriva_preferences', JSON.stringify(persistable));
-    if (customGeminiApiKey !== undefined) {
-      if (customGeminiApiKey) {
-        encryptForDevice(customGeminiApiKey).then(wrapped => {
-          localStorage.setItem('nouriva_gemini_api_key_local', wrapped);
+    if (customAiProvider !== undefined) {
+      if (customAiProvider) {
+        encryptForDevice(JSON.stringify(customAiProvider)).then(wrapped => {
+          localStorage.setItem('nouriva_ai_provider_local', wrapped);
         });
       } else {
-        localStorage.removeItem('nouriva_gemini_api_key_local');
+        localStorage.removeItem('nouriva_ai_provider_local');
       }
     }
   }, [preferences]);

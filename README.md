@@ -49,22 +49,32 @@ Security policies, the full-text search index behind Browse's search bar, and th
 
 ## Optional: AI assistance
 
-Set `GEMINI_API_KEY` as a server-wide fallback, or let each visitor paste their own key in
-Settings. A visitor's key is encrypted with a passphrase they choose (PBKDF2 + AES-GCM) before
-it's ever written to storage, and a separately device-wrapped copy (a non-extractable IndexedDB
-key) lets the app stay usable across closes without asking for the passphrase every time. See
-`src/services/keyEncryption.ts` and `src/services/deviceKeyStore.ts` for the details.
+Nouriva talks to AI through a generic OpenAI-compatible chat-completions client (`api/_app.ts`) —
+not locked to one vendor. `AI_BASE_URL`/`AI_API_KEY`/`AI_MODEL` set a server-wide fallback
+(defaults to Groq, which has a free tier), or each visitor can paste their own base URL, key, and
+model in Settings — Groq, OpenAI, Gemini's own OpenAI-compatibility endpoint
+(`https://generativelanguage.googleapis.com/v1beta/openai`), Together, Fireworks, or a local
+runtime (Ollama, LM Studio) all work, since they all speak the same protocol. A visitor's config is
+encrypted with a passphrase they choose (PBKDF2 + AES-GCM) before it's ever written to storage, and
+a separately device-wrapped copy (a non-extractable IndexedDB key) lets the app stay usable across
+closes without asking for the passphrase every time. See `src/services/keyEncryption.ts` and
+`src/services/deviceKeyStore.ts` for the details.
 
 AI covers writing assists (improve wording, suggest a title, help express a half-formed thought,
-suggest spirit tags), an optional nutrition estimate from a dish photo, and "Inspire me" (Browse's
-button for "I don't know what to cook" — pick a feeling, get a dish idea with a rough ingredient
-list and method, pre-filled straight into Create if you want to run with it). It's never invoked
-automatically — only when a visitor taps an assist button, and a one-time notice discloses that
-their content is being sent to Gemini. A nutrition estimate is always editable and clearable
-before sharing, and clearly marked as an AI estimate, never presented as measured fact. Inspire me
-also surfaces real posts other people already shared under the chosen feeling, so it stays useful
-even with no Gemini key configured — it only fully degrades to nothing if the deployment has
-neither Supabase nor a Gemini key set up.
+suggest spirit tags), identifying a dish from its photo (dish name, a rough ingredient list and
+method, and a nutrition estimate, all in one call — Create's photo step, which now comes first, so
+the rest of the form can start pre-filled), and "Inspire me" (Browse's button for "I don't know
+what to cook" — pick a feeling, get a dish idea with a rough ingredient list and method, pre-filled
+straight into Create if you want to run with it). It's never invoked automatically — only when a
+visitor taps an assist button, and a one-time notice discloses that their content is being sent to
+the configured AI provider. Anything AI drafts (dish name, ingredients, recipe, nutrition, dish
+ideas) is always editable and clearable before sharing, and the reflection field is never
+AI-written — that one stays the author's own words. Inspire me also surfaces real posts other
+people already shared under the chosen feeling, so it stays useful even with no AI key configured —
+it only fully degrades to nothing if the deployment has neither Supabase nor an AI key set up.
+Note that photo-based features (identify-from-photo, Inspire me's suggestions are text-only so
+unaffected) need a vision-capable model — if you or a visitor picks a text-only model, those calls
+will simply fail with the same honest error handling as any other AI failure.
 
 ## Moderation
 
@@ -172,7 +182,7 @@ uses the built-in font with no extra download. See `src/services/recipeBooklet.t
 
 ## Out of scope / not built (v1)
 
-- Multiple AI providers (Gemini only)
+- A picklist of named AI providers in the UI (bring-your-own base URL/key/model instead)
 - Threaded comments (only the three fixed reactions: ♡ ✨ 🙏)
 - Push notifications
 - Any account, profile, or follower system

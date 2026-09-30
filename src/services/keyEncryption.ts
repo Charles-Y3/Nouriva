@@ -1,4 +1,4 @@
-// Passphrase-based encryption for the personal Gemini API key, using the
+// Passphrase-based encryption for the personal AI provider config, using the
 // browser's built-in Web Crypto API — no external crypto library needed.
 //
 // What this protects against: someone inspecting localStorage, a stolen

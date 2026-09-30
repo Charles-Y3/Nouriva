@@ -16,7 +16,7 @@ const app = createApiApp();
 
 export default function handler(req: VercelRequest, res: VercelResponse) {
   // Express processes req/res asynchronously (middleware chain, route
-  // handlers, some of them awaiting a Gemini/Supabase/Blob call) but calling
+  // handlers, some of them awaiting an AI/Supabase/Blob call) but calling
   // app(req, res) directly doesn't return a promise tied to that — it just
   // kicks the chain off and returns immediately. Without waiting for the
   // response to actually finish, Vercel's runtime can tear the function

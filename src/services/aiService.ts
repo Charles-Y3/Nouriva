@@ -1,4 +1,5 @@
 import { decryptForDevice } from './deviceKeyStore';
+import type { NutritionEstimate } from '../types';
 
 export type AiUnavailableReason = 'no_api_key' | 'rate_limited' | 'network' | 'unknown';
 
@@ -14,14 +15,19 @@ export class AiAssistError extends Error {
 async function getAuthHeaders(): Promise<Record<string, string>> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   try {
-    const wrapped = localStorage.getItem('nouriva_gemini_api_key_local');
+    const wrapped = localStorage.getItem('nouriva_ai_provider_local');
     if (wrapped) {
-      const plainKey = await decryptForDevice(wrapped);
-      if (plainKey) headers['x-gemini-api-key'] = plainKey;
+      const plain = await decryptForDevice(wrapped);
+      if (plain) {
+        const config = JSON.parse(plain);
+        if (config.baseUrl) headers['x-ai-base-url'] = config.baseUrl;
+        if (config.apiKey) headers['x-ai-api-key'] = config.apiKey;
+        if (config.model) headers['x-ai-model'] = config.model;
+      }
     }
   } catch {
-    // No usable local key — request still goes through, server falls back
-    // to its own GEMINI_API_KEY (if configured) or returns NO_API_KEY.
+    // No usable local config — request still goes through, server falls
+    // back to its own AI_* env vars (if configured) or returns NO_API_KEY.
   }
   return headers;
 }
@@ -41,7 +47,7 @@ async function postJson(endpoint: string, body: Record<string, unknown>): Promis
   if (!res.ok) {
     const payload = await res.json().catch(() => ({}));
     if (res.status === 503 && payload.code === 'NO_API_KEY') {
-      throw new AiAssistError('no_api_key', payload.message || 'No Gemini API key is configured.');
+      throw new AiAssistError('no_api_key', payload.message || 'No AI provider is configured.');
     }
     if (res.status === 429) {
       throw new AiAssistError('rate_limited', 'The AI service is rate-limited right now — try again shortly.');
@@ -86,15 +92,13 @@ export async function inspireDish(spiritTag: string): Promise<DishSuggestion> {
   return callAssist({ action: 'inspire_dish', spiritTag });
 }
 
-export interface NutritionEstimateResult {
-  calories: number;
-  carbsGrams: number;
-  proteinGrams: number;
-  fatGrams: number;
-  fiberGrams: number;
-  isAiEstimate: true;
+export interface FoodIdentification {
+  dishName: string;
+  ingredients: string;
+  recipe: string;
+  nutrition: NutritionEstimate;
 }
 
-export async function estimateNutrition(imageBase64: string, mimeType: string): Promise<NutritionEstimateResult> {
-  return postJson('/api/ai/nutrition', { imageBase64, mimeType });
+export async function identifyFood(imageBase64: string, mimeType: string): Promise<FoodIdentification> {
+  return postJson('/api/ai/identify-food', { imageBase64, mimeType });
 }

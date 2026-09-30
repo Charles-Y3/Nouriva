@@ -6,10 +6,12 @@ export default function StepDishName({
   draft,
   update,
   onNext,
+  onBack,
 }: {
   draft: Draft;
   update: (patch: Partial<Draft>) => void;
   onNext: () => void;
+  onBack: () => void;
 }) {
   const t = useT();
   const [showMore, setShowMore] = useState(Boolean(draft.ingredients || draft.recipe));
@@ -56,7 +58,10 @@ export default function StepDishName({
         </button>
       )}
 
-      <div className="mt-6 flex justify-end">
+      <div className="mt-6 flex justify-between">
+        <button type="button" onClick={onBack} className="text-sm text-ink-500 hover:text-ink-900 px-2 py-2.5">
+          {t.common.back}
+        </button>
         <button
           type="button"
           disabled={!draft.dishName.trim()}

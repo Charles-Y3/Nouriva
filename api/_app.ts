@@ -1,5 +1,4 @@
 import express from "express";
-import { GoogleGenAI, Type } from "@google/genai";
 import { put, del } from "@vercel/blob";
 import { createClient } from "@supabase/supabase-js";
 
@@ -14,27 +13,80 @@ import { createClient } from "@supabase/supabase-js";
 // Note on what does NOT go through this server: reading/creating posts and
 // reacting/reporting all happen directly from the browser via
 // src/services/supabase.ts + Row Level Security (see db/schema.sql) — this
-// app only handles the three things that genuinely need a server: the
-// Gemini AI proxy (so a raw API key never has to be the only thing standing
-// between a visitor and a working request), Vercel Blob photo uploads
-// (needs a server-held write token), and admin moderation (needs the
-// Supabase service role key, which must never reach the client).
+// app only handles the three things that genuinely need a server: the AI
+// proxy (so a raw API key never has to be the only thing standing between a
+// visitor and a working request), Vercel Blob photo uploads (needs a
+// server-held write token), and admin moderation (needs the Supabase
+// service role key, which must never reach the client).
 
 const SPIRIT_TAG_VOCAB = [
   "Gratitude", "Peace", "Joy", "Compassion",
   "Connection", "Awareness", "Contentment", "Inspiration",
 ];
 
+// Generic OpenAI-compatible chat-completions client — NOT tied to one
+// vendor. Groq, OpenAI itself, Gemini's own OpenAI-compatibility endpoint
+// (generativelanguage.googleapis.com/v1beta/openai), Together, Fireworks,
+// and local runtimes (Ollama, LM Studio) all speak this same protocol, so
+// "bring your own base URL + key + model" covers all of them with one code
+// path instead of a per-vendor SDK. Defaults point at Groq (fast, has a
+// generous free tier) but every part is overridable per-request via
+// headers, so a visitor's own Settings choice always wins over the
+// server's fallback env vars.
+interface AiConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
+function getAiConfig(req?: express.Request): AiConfig | null {
+  const headerBaseUrl = (req?.headers['x-ai-base-url'] as string | undefined)?.trim();
+  const headerApiKey = (req?.headers['x-ai-api-key'] as string | undefined)?.trim();
+  const headerModel = (req?.headers['x-ai-model'] as string | undefined)?.trim();
+
+  const baseUrl = (headerBaseUrl || process.env.AI_BASE_URL || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
+  const apiKey = headerApiKey || process.env.AI_API_KEY;
+  const model = headerModel || process.env.AI_MODEL || 'llama-3.3-70b-versatile';
+
+  if (!apiKey) return null;
+  return { baseUrl, apiKey, model };
+}
+
+// `response_format: json_object` isn't universally supported across
+// OpenAI-compatible providers/local models, so instead of depending on it,
+// the system prompt itself demands strict JSON and this strips a markdown
+// code fence if the model wraps its answer in one anyway (common even when
+// asked not to).
+function extractJson(text: string): any {
+  const cleaned = text.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
+  return JSON.parse(cleaned);
+}
+
+async function callChatCompletion(config: AiConfig, system: string, userContent: unknown): Promise<string> {
+  const res = await fetch(`${config.baseUrl}/chat/completions`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
+    body: JSON.stringify({
+      model: config.model,
+      temperature: 0.7,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: userContent },
+      ],
+    }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    const err: any = new Error(`AI provider returned ${res.status}${body ? `: ${body.slice(0, 500)}` : ''}`);
+    err.status = res.status;
+    throw err;
+  }
+  const data: any = await res.json();
+  return data?.choices?.[0]?.message?.content || '{}';
+}
+
 export function createApiApp() {
   const app = express();
-
-  // Helper for Gemini AI initialization (supports server key or user custom key header).
-  const getGenAI = (req?: express.Request) => {
-    const customKey = (req?.headers['x-gemini-api-key'] as string | undefined)?.trim();
-    const apiKey = customKey || process.env.GEMINI_API_KEY;
-    if (!apiKey) return null;
-    return new GoogleGenAI({ apiKey });
-  };
 
   const getSupabaseAdmin = () => {
     const url = process.env.VITE_SUPABASE_URL;
@@ -53,10 +105,10 @@ export function createApiApp() {
   }
 
   // JSON body limit covers both the small text-only AI-assist requests and
-  // the nutrition-estimate request's base64 photo (a downscaled ~1024px
-  // JPEG comfortably fits well under this). The photo upload route below
-  // parses raw bytes instead, scoped to just that one route, so it isn't
-  // affected by this limit or JSON parsing.
+  // the identify-food request's base64 photo (a downscaled ~1600px JPEG
+  // comfortably fits well under this). The photo upload route below parses
+  // raw bytes instead, scoped to just that one route, so it isn't affected
+  // by this limit or JSON parsing.
   app.use(express.json({ limit: '8mb' }));
 
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
@@ -73,48 +125,56 @@ export function createApiApp() {
     res.json({ status: "ok", time: new Date().toISOString() });
   });
 
+  function handleAiError(err: any, res: express.Response, failedMessage: string) {
+    console.error("AI error:", err);
+    const msg = String(err?.message || '');
+    if (err?.status === 429 || /quota|rate limit/i.test(msg)) {
+      return res.status(429).json({ error: "Rate limited", code: "RATE_LIMITED", details: msg });
+    }
+    res.status(500).json({ error: failedMessage, details: msg });
+  }
+
   // Single flexible AI-assist endpoint. Every action shares the same
-  // plumbing (auth header, no-key fallback, error shape), so one route
+  // plumbing (auth headers, no-key fallback, error shape), so one route
   // keeps that logic in one place rather than duplicated across four.
   app.post("/api/ai/assist", async (req, res) => {
     try {
       const { action, text, dishName, spiritTag } = req.body || {};
 
-      const ai = getGenAI(req);
-      if (!ai) {
+      const config = getAiConfig(req);
+      if (!config) {
         return res.status(503).json({
           error: "AI_UNAVAILABLE",
           code: "NO_API_KEY",
-          message: "No Gemini API key is configured. Add your own key in Settings to use AI assistance.",
+          message: "No AI provider is configured. Add your own API key in Settings to use AI assistance.",
         });
       }
 
       let systemInstruction: string;
       let userPrompt: string;
-      let responseMimeType: string | undefined = "application/json";
 
       switch (action) {
         case "improve_writing":
           if (!text) return res.status(400).json({ error: "text is required" });
-          systemInstruction = `You gently polish a short personal reflection about a vegetarian dish and the feeling or experience it inspired, for the app Nouriva. Preserve the writer's own voice, meaning and first-person perspective — only smooth the wording. Do not invent details, emotions or spiritual claims the writer didn't express. Do not add religious framing. Keep it roughly the same length. Return a strict JSON object: { "result": string }.`;
+          systemInstruction = `You gently polish a short personal reflection about a vegetarian dish and the feeling or experience it inspired, for the app Nouriva. Preserve the writer's own voice, meaning and first-person perspective — only smooth the wording. Do not invent details, emotions or spiritual claims the writer didn't express. Do not add religious framing. Keep it roughly the same length. Return ONLY a strict JSON object, no markdown, no commentary: { "result": string }.`;
           userPrompt = text;
           break;
 
         case "suggest_title":
           if (!text && !dishName) return res.status(400).json({ error: "text or dishName is required" });
-          systemInstruction = `You suggest 3 short, warm, understated titles (3-6 words each) for a Nouriva post about a vegetarian dish and the personal reflection it inspired. No clickbait, no exclamation marks, no religious claims — quiet and genuine in tone. Return a strict JSON object: { "titles": string[] }.`;
+          systemInstruction = `You suggest 3 short, warm, understated titles (3-6 words each) for a Nouriva post about a vegetarian dish and the personal reflection it inspired. No clickbait, no exclamation marks, no religious claims — quiet and genuine in tone. Return ONLY a strict JSON object, no markdown, no commentary: { "titles": string[] }.`;
           userPrompt = `Dish: ${dishName || "(untitled)"}\nReflection: ${text || "(none yet)"}`;
           break;
 
         case "help_express":
           if (!text) return res.status(400).json({ error: "text is required" });
-          systemInstruction = `The writer has jotted a rough, partial note about what they felt while cooking, eating or sharing a vegetarian dish. Gently expand it into 2-4 warm, genuine sentences in first person, staying strictly within the feeling/meaning they already hinted at — never inventing a spiritual or religious interpretation they didn't suggest themselves. Return a strict JSON object: { "result": string }.`;
+          systemInstruction = `The writer has jotted a rough, partial note about what they felt while cooking, eating or sharing a vegetarian dish. Gently expand it into 2-4 warm, genuine sentences in first person, staying strictly within the feeling/meaning they already hinted at — never inventing a spiritual or religious interpretation they didn't suggest themselves. Return ONLY a strict JSON object, no markdown, no commentary: { "result": string }.`;
           userPrompt = text;
           break;
 
         case "suggest_tags":
           if (!text) return res.status(400).json({ error: "text is required" });
-          systemInstruction = `From this reflection about a vegetarian dish, pick 1-3 tags that best match the feeling described, ONLY from this exact list: ${SPIRIT_TAG_VOCAB.join(", ")}. Return a strict JSON object: { "tags": string[] } using only tags from that list.`;
+          systemInstruction = `From this reflection about a vegetarian dish, pick 1-3 tags that best match the feeling described, ONLY from this exact list: ${SPIRIT_TAG_VOCAB.join(", ")}. Return ONLY a strict JSON object, no markdown, no commentary: { "tags": string[] } using only tags from that list.`;
           userPrompt = text;
           break;
 
@@ -122,7 +182,7 @@ export function createApiApp() {
           if (!spiritTag || !SPIRIT_TAG_VOCAB.includes(spiritTag)) {
             return res.status(400).json({ error: "spiritTag must be one of: " + SPIRIT_TAG_VOCAB.join(", ") });
           }
-          systemInstruction = `You suggest ONE simple, practical vegetarian dish idea for someone who wants to cook something that evokes the feeling "${spiritTag}", for the app Nouriva. Use common, easy-to-find ingredients — not an exotic or hard-to-source dish. Keep it achievable for a home cook. Do not add religious framing or claim the dish itself has spiritual properties — just explain briefly, in warm plain language, why preparing or sharing this dish suits that feeling (e.g. the ritual of making it, who it's shared with, what it's made of). Return a strict JSON object: { "dishName": string, "blurb": string (1-2 sentences), "ingredients": string (a short newline-separated list), "recipe": string (a short rough method, 2-4 sentences) }.`;
+          systemInstruction = `You suggest ONE simple, practical vegetarian dish idea for someone who wants to cook something that evokes the feeling "${spiritTag}", for the app Nouriva. Use common, easy-to-find ingredients — not an exotic or hard-to-source dish. Keep it achievable for a home cook. Do not add religious framing or claim the dish itself has spiritual properties — just explain briefly, in warm plain language, why preparing or sharing this dish suits that feeling (e.g. the ritual of making it, who it's shared with, what it's made of). Return ONLY a strict JSON object, no markdown, no commentary: { "dishName": string, "blurb": string (1-2 sentences), "ingredients": string (a short newline-separated list), "recipe": string (a short rough method, 2-4 sentences) }.`;
           userPrompt = `Feeling: ${spiritTag}`;
           break;
 
@@ -130,41 +190,30 @@ export function createApiApp() {
           return res.status(400).json({ error: "Unknown action" });
       }
 
-      const response = await ai.models.generateContent({
-        model: "gemini-flash-latest",
-        contents: userPrompt,
-        config: { systemInstruction, responseMimeType },
-      });
-
-      const resultText = (response.text || "{}").replace(/^```(json)?/i, '').replace(/```$/, '').trim();
-      res.json(JSON.parse(resultText));
+      const content = await callChatCompletion(config, systemInstruction, userPrompt);
+      res.json(extractJson(content));
     } catch (err: any) {
-      console.error("AI assist error:", err);
-      const msg = String(err?.message || '');
-      if (err?.status === 429 || /quota|rate limit|resource_exhausted/i.test(msg)) {
-        return res.status(429).json({ error: "Rate limited", code: "RATE_LIMITED", details: msg });
-      }
-      res.status(500).json({ error: "AI assist failed", details: msg });
+      handleAiError(err, res, "AI assist failed");
     }
   });
 
-  // Nutrition estimate from a photo — separate from /api/ai/assist since it
-  // takes an image, not just text, and returns a fixed structured shape
-  // (responseSchema) rather than a free-form result. Mirrors living-in-harmony's
-  // /api/ai/food-analysis pattern. Nouriva isn't a nutrition database — this
-  // is an optional, editable estimate the author can accept, tweak, or clear
-  // entirely before sharing, never an automatic or authoritative figure.
-  app.post("/api/ai/nutrition", async (req, res) => {
+  // Identify a dish from a photo — separate from /api/ai/assist since it
+  // takes an image, not just text. In one call: dish name, a rough
+  // ingredient list, a rough method, and a nutrition estimate — all
+  // optional, editable, author-reviewed fields the person can accept,
+  // tweak, or clear entirely on the next Create step. Never presented as
+  // authoritative; Nouriva isn't a recipe or nutrition database.
+  app.post("/api/ai/identify-food", async (req, res) => {
     try {
       const { imageBase64, mimeType = 'image/jpeg' } = req.body || {};
       if (!imageBase64) return res.status(400).json({ error: "imageBase64 is required" });
 
-      const ai = getGenAI(req);
-      if (!ai) {
+      const config = getAiConfig(req);
+      if (!config) {
         return res.status(503).json({
           error: "AI_UNAVAILABLE",
           code: "NO_API_KEY",
-          message: "No Gemini API key is configured. Add your own key in Settings to use AI assistance.",
+          message: "No AI provider is configured. Add your own API key in Settings to use AI assistance.",
         });
       }
 
@@ -179,43 +228,29 @@ export function createApiApp() {
       if (detectedMime === 'image/jpg') detectedMime = 'image/jpeg';
       cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
 
-      const systemInstruction = `You are a careful nutrition-estimation assistant analyzing a single vegetarian dish photo. Estimate calories and macros for the exact quantity visible, using visible scale cues (plate/bowl size, portion). Account for hidden but likely ingredients typical of the dish (cooking oil, dressing, sauce) rather than only what's directly visible. When uncertain, prefer a realistic middle estimate over the leanest possible reading. All numbers are estimates, not lab measurements.`;
+      const systemInstruction = `You are a careful assistant identifying a single vegetarian dish from a photo, for the app Nouriva. Name the specific dish, list its likely main ingredients, sketch a short rough method, and estimate calories/macros for the quantity visible (using scale cues like the plate/bowl size; account for likely hidden ingredients such as cooking oil or dressing rather than only what's directly visible — when uncertain, prefer a realistic middle estimate). Everything here is a starting draft the person will review and edit themselves, not a final answer — keep it concise and plausible rather than exhaustive. Return ONLY a strict JSON object, no markdown, no commentary: { "dishName": string, "ingredients": string (short newline-separated list), "recipe": string (2-4 sentence rough method), "calories": number, "carbsGrams": number, "proteinGrams": number, "fatGrams": number, "fiberGrams": number }.`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-flash-latest",
-        contents: [
-          { inlineData: { mimeType: detectedMime, data: cleanBase64 } },
-          { text: "Estimate calories and macros for this dish." },
-        ],
-        config: {
-          systemInstruction,
-          temperature: 0,
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              calories: { type: Type.NUMBER, description: "Estimated total calories (kcal) for the quantity pictured" },
-              carbsGrams: { type: Type.NUMBER },
-              proteinGrams: { type: Type.NUMBER },
-              fatGrams: { type: Type.NUMBER },
-              fiberGrams: { type: Type.NUMBER },
-            },
-            required: ["calories", "carbsGrams", "proteinGrams", "fatGrams", "fiberGrams"],
-          },
+      const content = await callChatCompletion(config, systemInstruction, [
+        { type: 'text', text: 'Identify this dish and draft the fields described.' },
+        { type: 'image_url', image_url: { url: `data:${detectedMime};base64,${cleanBase64}` } },
+      ]);
+
+      const parsed = extractJson(content);
+      res.json({
+        dishName: parsed.dishName,
+        ingredients: parsed.ingredients,
+        recipe: parsed.recipe,
+        nutrition: {
+          calories: parsed.calories,
+          carbsGrams: parsed.carbsGrams,
+          proteinGrams: parsed.proteinGrams,
+          fatGrams: parsed.fatGrams,
+          fiberGrams: parsed.fiberGrams,
+          isAiEstimate: true,
         },
       });
-
-      let resultText = response.text || "{}";
-      resultText = resultText.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
-      const nutrition = JSON.parse(resultText);
-      res.json({ ...nutrition, isAiEstimate: true });
     } catch (err: any) {
-      console.error("AI nutrition error:", err);
-      const msg = String(err?.message || '');
-      if (err?.status === 429 || /quota|rate limit|resource_exhausted/i.test(msg)) {
-        return res.status(429).json({ error: "Rate limited", code: "RATE_LIMITED", details: msg });
-      }
-      res.status(500).json({ error: "Nutrition estimate failed", details: msg });
+      handleAiError(err, res, "Food identification failed");
     }
   });
 

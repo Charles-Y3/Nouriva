@@ -1,4 +1,4 @@
-// Module-level (not component state) so the "your text is sent to Gemini"
+// Module-level (not component state) so the "your text is sent to your AI provider"
 // disclosure shows once per app load across every AI-assist entry point
 // (writing assist, nutrition estimate), not once per component mount.
 let shown = false;

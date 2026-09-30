@@ -1,4 +1,4 @@
-// Device-bound wrapping for the unlocked Gemini key's localStorage copy.
+// Device-bound wrapping for the unlocked AI provider config's localStorage copy.
 //
 // Problem this solves: keeping the app usable across closes without asking
 // for the passphrase again means SOME copy of the decrypted key has to sit
@@ -22,7 +22,7 @@
 
 const DB_NAME = 'nouriva_device_key_store';
 const STORE_NAME = 'keys';
-const KEY_ID = 'gemini_wrap_key';
+const KEY_ID = 'ai_provider_wrap_key';
 const ENCODED_PREFIX = 'dk1:';
 
 function toBase64(bytes: Uint8Array): string {

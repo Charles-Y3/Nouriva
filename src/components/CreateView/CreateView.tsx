@@ -31,7 +31,7 @@ export function CreateView({
 }) {
   const { drafts, saveDraft } = useApp();
   const t = useT();
-  const STEPS = [t.create.dishName.title, t.create.photo.title, t.create.reflection.title, t.create.tags.title, t.create.share.title];
+  const STEPS = [t.create.photo.title, t.create.dishName.title, t.create.reflection.title, t.create.tags.title, t.create.share.title];
   const [draft, setDraft] = useState<Draft>(() => {
     if (resumeDraftId) {
       const found = drafts.find(d => d.id === resumeDraftId);
@@ -83,8 +83,8 @@ export function CreateView({
         ))}
       </div>
 
-      {step === 0 && <StepDishName draft={draft} update={update} onNext={goNext} />}
-      {step === 1 && <StepPhoto draft={draft} update={update} onNext={goNext} onBack={goBack} />}
+      {step === 0 && <StepPhoto draft={draft} update={update} onNext={goNext} />}
+      {step === 1 && <StepDishName draft={draft} update={update} onNext={goNext} onBack={goBack} />}
       {step === 2 && <StepReflection draft={draft} update={update} onNext={goNext} onBack={goBack} />}
       {step === 3 && <StepSpiritTags draft={draft} update={update} onNext={goNext} onBack={goBack} />}
       {step === 4 && <StepShare draft={draft} onBack={goBack} onDone={onDone} />}

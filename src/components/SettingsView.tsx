@@ -1,9 +1,12 @@
 import { useRef, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useT } from '../hooks/useT';
-import { useGeminiKeyManager } from '../hooks/useGeminiKeyManager';
+import { useAiProviderManager } from '../hooks/useAiProviderManager';
 import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import type { Language } from '../types';
+
+const DEFAULT_BASE_URL = 'https://api.groq.com/openai/v1';
+const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
 import ConfirmButton from './ConfirmButton';
 import { downloadBackup, readBackupFile } from '../utils/backup';
 import { markBackedUp } from '../utils/backupReminder';
@@ -25,10 +28,12 @@ const LANGUAGES: { id: Language; label: string }[] = [
 export default function SettingsView() {
   const { preferences, updatePreferences, drafts, applyBackup, resetAllLocalData } = useApp();
   const t = useT();
-  const { isLocked, isUnlocked, hasSavedKey, saveKey, unlockKey, clearKey } = useGeminiKeyManager();
+  const { isLocked, isUnlocked, saveProvider, unlockProvider, clearProvider } = useAiProviderManager();
   const { canInstall, isInstalled, isIOS, promptInstall } = useInstallPrompt();
 
-  const [rawKey, setRawKey] = useState('');
+  const [rawBaseUrl, setRawBaseUrl] = useState(DEFAULT_BASE_URL);
+  const [rawApiKey, setRawApiKey] = useState('');
+  const [rawModel, setRawModel] = useState(DEFAULT_MODEL);
   const [passphrase, setPassphrase] = useState('');
   const [unlockPassphrase, setUnlockPassphrase] = useState('');
   const [unlockError, setUnlockError] = useState(false);
@@ -103,7 +108,7 @@ export default function SettingsView() {
         <h2 className="text-sm font-semibold text-ink-500 uppercase tracking-wide mb-2">{t.settings.aiHeading}</h2>
         <p className="text-sm text-ink-500 mb-2">{t.settings.aiBody}</p>
         <a
-          href="https://aistudio.google.com/app/apikey"
+          href="https://console.groq.com/keys"
           target="_blank"
           rel="noopener noreferrer"
           className="text-sm text-clay-700 hover:text-clay-600 underline inline-flex items-center gap-1 mb-3"
@@ -114,11 +119,14 @@ export default function SettingsView() {
 
         {isUnlocked ? (
           <div className="bg-linen-100 border border-linen-200 rounded-xl p-4 space-y-2">
-            <p className="text-sm text-ink-700">{t.settings.keyUnlocked}</p>
+            <p className="text-sm text-ink-700">{t.settings.providerUnlocked}</p>
+            <p className="text-xs text-ink-500 font-mono break-all">
+              {preferences.customAiProvider?.model} · {preferences.customAiProvider?.baseUrl}
+            </p>
             <ConfirmButton
               label={t.settings.removeKey}
               prompt={t.settings.removeKeyConfirm}
-              onConfirm={clearKey}
+              onConfirm={clearProvider}
               className="text-sm text-clay-700 hover:text-clay-600 underline"
             />
           </div>
@@ -137,7 +145,7 @@ export default function SettingsView() {
               <button
                 type="button"
                 onClick={async () => {
-                  const ok = await unlockKey(unlockPassphrase);
+                  const ok = await unlockProvider(unlockPassphrase);
                   setUnlockError(!ok);
                   if (ok) setUnlockPassphrase('');
                 }}
@@ -148,20 +156,43 @@ export default function SettingsView() {
               <ConfirmButton
                 label={t.settings.forgetKey}
                 prompt={t.settings.removeKeyConfirm}
-                onConfirm={clearKey}
+                onConfirm={clearProvider}
                 className="text-sm text-ink-500 underline"
               />
             </div>
           </div>
         ) : (
           <div className="bg-linen-100 border border-linen-200 rounded-xl p-4 space-y-2">
-            <input
-              type="password"
-              value={rawKey}
-              onChange={e => setRawKey(e.target.value)}
-              placeholder={t.settings.apiKeyPlaceholder}
-              className="w-full rounded-lg border border-linen-200 bg-linen-50 px-3 py-2 text-sm"
-            />
+            <label className="block text-xs text-ink-500">
+              {t.settings.baseUrlLabel}
+              <input
+                type="text"
+                value={rawBaseUrl}
+                onChange={e => setRawBaseUrl(e.target.value)}
+                placeholder={DEFAULT_BASE_URL}
+                className="mt-1 w-full rounded-lg border border-linen-200 bg-linen-50 px-3 py-2 text-sm font-mono"
+              />
+            </label>
+            <label className="block text-xs text-ink-500">
+              {t.settings.modelLabel}
+              <input
+                type="text"
+                value={rawModel}
+                onChange={e => setRawModel(e.target.value)}
+                placeholder={DEFAULT_MODEL}
+                className="mt-1 w-full rounded-lg border border-linen-200 bg-linen-50 px-3 py-2 text-sm font-mono"
+              />
+            </label>
+            <label className="block text-xs text-ink-500">
+              {t.settings.apiKeyLabel}
+              <input
+                type="password"
+                value={rawApiKey}
+                onChange={e => setRawApiKey(e.target.value)}
+                placeholder={t.settings.apiKeyPlaceholder}
+                className="mt-1 w-full rounded-lg border border-linen-200 bg-linen-50 px-3 py-2 text-sm"
+              />
+            </label>
             <input
               type="password"
               value={passphrase}
@@ -171,10 +202,13 @@ export default function SettingsView() {
             />
             <button
               type="button"
-              disabled={!rawKey.trim() || !passphrase.trim()}
+              disabled={!rawApiKey.trim() || !passphrase.trim()}
               onClick={async () => {
-                await saveKey(rawKey, passphrase);
-                setRawKey('');
+                await saveProvider(
+                  { baseUrl: rawBaseUrl.trim() || DEFAULT_BASE_URL, apiKey: rawApiKey.trim(), model: rawModel.trim() || DEFAULT_MODEL },
+                  passphrase
+                );
+                setRawApiKey('');
                 setPassphrase('');
               }}
               className="bg-clay-600 hover:bg-clay-700 disabled:opacity-50 text-linen-50 rounded-full px-4 py-1.5 text-sm"

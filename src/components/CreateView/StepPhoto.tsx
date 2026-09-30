@@ -2,7 +2,7 @@ import { useRef, useState } from 'react';
 import type { Draft } from '../../types';
 import { useT } from '../../hooks/useT';
 import { blobToDataUrl, downscaleImage, saveDraftPhoto, deleteDraftPhoto, getDraftPhoto } from '../../services/localDrafts';
-import { estimateNutrition, AiAssistError } from '../../services/aiService';
+import { identifyFood, AiAssistError } from '../../services/aiService';
 import { isAiConsentShown, markAiConsentShown } from '../../services/aiConsent';
 import ConsentNotice from '../ConsentNotice';
 import NutritionFields from './NutritionFields';
@@ -11,19 +11,18 @@ export default function StepPhoto({
   draft,
   update,
   onNext,
-  onBack,
 }: {
   draft: Draft;
   update: (patch: Partial<Draft>) => void;
   onNext: () => void;
-  onBack: () => void;
 }) {
   const t = useT();
-  const inputRef = useRef<HTMLInputElement>(null);
+  const galleryInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [estimating, setEstimating] = useState(false);
-  const [estimateError, setEstimateError] = useState<string | null>(null);
+  const [identifying, setIdentifying] = useState(false);
+  const [identifyError, setIdentifyError] = useState<string | null>(null);
   const [showConsent, setShowConsent] = useState(!isAiConsentShown());
 
   async function onFileChosen(file: File) {
@@ -51,22 +50,31 @@ export default function StepPhoto({
     update({ photoDraftId: undefined, photoPreviewDataUrl: undefined });
   }
 
-  async function runEstimate() {
+  async function runIdentify() {
     if (!draft.photoDraftId) return;
     markAiConsentShown();
     setShowConsent(false);
-    setEstimating(true);
-    setEstimateError(null);
+    setIdentifying(true);
+    setIdentifyError(null);
     try {
       const blob = await getDraftPhoto(draft.photoDraftId);
       if (!blob) throw new Error('Photo not found');
       const dataUrl = await blobToDataUrl(blob);
-      const result = await estimateNutrition(dataUrl, blob.type || 'image/jpeg');
-      update({ nutrition: result });
+      const result = await identifyFood(dataUrl, blob.type || 'image/jpeg');
+      // Fills dish name/ingredients/recipe/nutrition together — the next
+      // step (dish name) already shows these pre-filled and editable, and
+      // reflection is deliberately left untouched: that's the one field
+      // that has to stay the author's own words, never AI-written.
+      update({
+        dishName: result.dishName || draft.dishName,
+        ingredients: result.ingredients || draft.ingredients,
+        recipe: result.recipe || draft.recipe,
+        nutrition: result.nutrition,
+      });
     } catch (err) {
-      setEstimateError(err instanceof AiAssistError && err.reason === 'no_api_key' ? t.aiAssist.noKey : t.aiAssist.failed);
+      setIdentifyError(err instanceof AiAssistError && err.reason === 'no_api_key' ? t.aiAssist.noKey : t.aiAssist.failed);
     } finally {
-      setEstimating(false);
+      setIdentifying(false);
     }
   }
 
@@ -87,17 +95,27 @@ export default function StepPhoto({
           </button>
         </div>
       ) : (
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => inputRef.current?.click()}
-          className="w-full border-2 border-dashed border-linen-300 rounded-2xl py-12 text-ink-500 hover:border-clay-500 hover:text-clay-700 transition-colors"
-        >
-          {busy ? t.create.photo.processing : t.create.photo.choose}
-        </button>
+        <div className="flex gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => galleryInputRef.current?.click()}
+            className="flex-1 border-2 border-dashed border-linen-300 rounded-2xl py-12 text-ink-500 hover:border-clay-500 hover:text-clay-700 transition-colors"
+          >
+            {busy ? t.create.photo.processing : t.create.photo.choose}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => cameraInputRef.current?.click()}
+            className="flex-1 border-2 border-dashed border-linen-300 rounded-2xl py-12 text-ink-500 hover:border-clay-500 hover:text-clay-700 transition-colors"
+          >
+            {t.create.photo.takePhoto}
+          </button>
+        </div>
       )}
       <input
-        ref={inputRef}
+        ref={galleryInputRef}
         type="file"
         accept="image/*"
         className="hidden"
@@ -107,20 +125,32 @@ export default function StepPhoto({
           e.target.value = '';
         }}
       />
+      <input
+        ref={cameraInputRef}
+        type="file"
+        accept="image/*"
+        capture="environment"
+        className="hidden"
+        onChange={e => {
+          const file = e.target.files?.[0];
+          if (file) onFileChosen(file);
+          e.target.value = '';
+        }}
+      />
       {error && <p className="mt-2 text-sm text-clay-700">{error}</p>}
 
-      {draft.photoPreviewDataUrl && !draft.nutrition && (
+      {draft.photoPreviewDataUrl && !draft.dishName && (
         <div className="mt-3 space-y-2">
           {showConsent && <ConsentNotice onDismiss={() => { markAiConsentShown(); setShowConsent(false); }} />}
           <button
             type="button"
-            disabled={estimating}
-            onClick={runEstimate}
+            disabled={identifying}
+            onClick={runIdentify}
             className="text-xs bg-linen-100 border border-linen-200 rounded-full px-3 py-1.5 text-ink-700 hover:border-sage-400 disabled:opacity-50"
           >
-            {estimating ? t.create.photo.estimating : t.create.photo.estimateNutrition}
+            {identifying ? t.create.photo.identifying : t.create.photo.identifyButton}
           </button>
-          {estimateError && <p className="text-xs text-clay-700">{estimateError}</p>}
+          {identifyError && <p className="text-xs text-clay-700">{identifyError}</p>}
         </div>
       )}
 
@@ -132,10 +162,7 @@ export default function StepPhoto({
         />
       )}
 
-      <div className="mt-6 flex justify-between">
-        <button type="button" onClick={onBack} className="text-sm text-ink-500 hover:text-ink-900 px-2 py-2.5">
-          {t.common.back}
-        </button>
+      <div className="mt-6 flex justify-end">
         <button
           type="button"
           onClick={onNext}

@@ -63,15 +63,29 @@ export interface MyPostRef {
   publishedAt: number;
 }
 
+// User-supplied AI provider config — deliberately generic, not tied to one
+// vendor. baseUrl defaults to Groq's OpenAI-compatible endpoint but can
+// point anywhere that speaks the same chat-completions protocol (OpenAI,
+// Gemini's own OpenAI-compatibility endpoint, Together, a local Ollama/LM
+// Studio server, etc).
+export interface AiProviderConfig {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}
+
 export interface UserPreferences {
   completedIntro: boolean;
   language: Language;
   fontSize: FontSize;
-  // Ciphertext (passphrase-encrypted, see services/keyEncryption.ts) —
-  // persisted in nouriva_preferences, travels with any future data export.
-  geminiKeyEncrypted?: string;
+  // Ciphertext (passphrase-encrypted, see services/keyEncryption.ts) — the
+  // whole AiProviderConfig, JSON-stringified before encrypting. Persisted
+  // in nouriva_preferences, travels with any future data export.
+  aiProviderEncrypted?: string;
   // Plaintext, unlocked copy — deliberately NOT persisted as part of the
   // nouriva_preferences blob (see AppContext.tsx); held only in memory here
   // plus a separately device-wrapped copy in its own localStorage slot.
-  customGeminiApiKey?: string;
+  // `null` (vs. undefined) is the explicit "cleared" sentinel — see
+  // useAiProviderManager.ts's clearProvider().
+  customAiProvider?: AiProviderConfig | null;
 }
