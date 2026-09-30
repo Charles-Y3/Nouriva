@@ -1,7 +1,7 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import type { Draft, Language, MyPostRef, ReactionType, UserPreferences } from '../types';
 import { encryptForDevice, decryptForDevice } from '../services/deviceKeyStore';
-import { autoSaveIfEnabled } from '../utils/folderBackup';
+import { scheduleAutoSave } from '../utils/folderBackup';
 
 function detectDefaultLanguage(): Language {
   const nav = typeof navigator !== 'undefined' ? navigator.language : 'en';
@@ -38,7 +38,8 @@ interface AppContextType {
   updatePreferences: (prefs: Partial<UserPreferences>) => void;
   saveDraft: (draft: Draft) => void;
   deleteDraft: (id: string) => void;
-  markPublished: (draftId: string | undefined, publishedPostId: string) => void;
+  markPublished: (draftId: string | undefined, publishedPostId: string, key?: string) => void;
+  addMyPostRef: (ref: MyPostRef) => void;
   recordReactionGiven: (postId: string, type: ReactionType) => void;
   hasReacted: (postId: string, type: ReactionType) => boolean;
   recordReportGiven: (postId: string) => void;
@@ -119,9 +120,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
 
   useEffect(() => {
     localStorage.setItem('nouriva_drafts', JSON.stringify(drafts));
-    // Silent no-op unless the user has enabled folder auto-backup in
-    // Settings (see utils/folderBackup.ts) — never prompts here.
-    autoSaveIfEnabled();
   }, [drafts]);
 
   useEffect(() => {
@@ -135,6 +133,14 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   useEffect(() => {
     localStorage.setItem('nouriva_reports_given', JSON.stringify([...reportsGiven]));
   }, [reportsGiven]);
+
+  // Any change to anything backed up re-saves the folder backup (debounced;
+  // a silent no-op unless the user enabled folder backup in Settings, and it
+  // never prompts — see utils/folderBackup.ts). Declared after the effects
+  // above so localStorage is already written when the backup is built.
+  useEffect(() => {
+    scheduleAutoSave();
+  }, [drafts, myPostIds, reactionsGiven, reportsGiven, preferences]);
 
   const updatePreferences = (prefs: Partial<UserPreferences>) => {
     setPreferencesState(prev => ({ ...prev, ...prefs }));
@@ -157,11 +163,27 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setDrafts(prev => prev.filter(d => d.id !== id));
   };
 
-  const markPublished = (draftId: string | undefined, publishedPostId: string) => {
+  // Also called after editing an already-shared post (its draft is done, but
+  // the post is already listed) — so it never adds a second entry for an id.
+  const markPublished = (draftId: string | undefined, publishedPostId: string, key?: string) => {
     if (draftId) {
       setDrafts(prev => prev.filter(d => d.id !== draftId));
     }
-    setMyPostIds(prev => [{ id: publishedPostId, publishedAt: Date.now() }, ...prev]);
+    setMyPostIds(prev =>
+      prev.some(r => r.id === publishedPostId)
+        ? prev
+        : [{ id: publishedPostId, publishedAt: Date.now(), key }, ...prev]
+    );
+  };
+
+  // Restoring a share from a recovery code (see shareKeys.ts) — adds the ref
+  // or fills in a missing key on an existing one.
+  const addMyPostRef = (ref: MyPostRef) => {
+    setMyPostIds(prev =>
+      prev.some(r => r.id === ref.id)
+        ? prev.map(r => (r.id === ref.id ? { ...r, key: ref.key ?? r.key } : r))
+        : [ref, ...prev]
+    );
   };
 
   const recordReactionGiven = (postId: string, type: ReactionType) => {
@@ -220,6 +242,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         saveDraft,
         deleteDraft,
         markPublished,
+        addMyPostRef,
         recordReactionGiven,
         hasReacted,
         recordReportGiven,

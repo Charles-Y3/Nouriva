@@ -37,7 +37,9 @@ Create both show an honest "not connected yet" state instead of failing silently
 Run [`db/schema.sql`](db/schema.sql) once in your Supabase project's SQL editor (Project → SQL
 Editor → New query → paste the whole file → Run). This creates the `posts` table, its Row Level
 Security policies, the full-text search index behind Browse's search bar, and the two RPCs
-(`react_to_post`, `report_post`) the app calls directly from the browser.
+(`react_to_post`, `report_post`) the app calls directly from the browser. The file is idempotent —
+re-run it after pulling an update: section 5 adds categories, share keys, author hide/show and the
+anti-spam trigger to an existing database (Browse fails to load until it has been run).
 
 ## Deploying to Vercel
 
@@ -76,6 +78,14 @@ Note that photo-based features (identify-from-photo, Inspire me's suggestions ar
 unaffected) need a vision-capable model — if you or a visitor picks a text-only model, those calls
 will simply fail with the same honest error handling as any other AI failure.
 
+**Language and diet.** Every AI-written value follows the app's language setting (the client sends
+it with each request; "improve writing" keeps the writer's own language). Browse's "Inspire me" is
+constrained to Buddhist-style vegetarian — no meat/fish, and none of onion, garlic, chives, green
+onion, leek or asafoetida (eggs and dairy are fine): stated in the prompt, and *enforced* by a
+deterministic English + Chinese ingredient filter (`api/_dietFilter.ts`) that regenerates or drops
+any suggestion that breaks the rule. The default model is `qwen/qwen3.8-27b` (vision-capable);
+any model works, but photo features need one that accepts images.
+
 ## Moderation
 
 Before a post can be shared, `src/utils/contentFilter.ts`'s keyword denylist blocks the most
@@ -84,10 +94,21 @@ Postgres CHECK constraint (see `db/schema.sql`) so a request that bypasses the U
 slip through either. This is a blunt, always-on baseline that needs no AI key — it can't catch
 anything requiring judgment (illegal activity described in clean language, non-slur harassment,
 misinformation), which is what report + admin review remain for. Sharing also requires an explicit
-"share this publicly?" confirmation that states up front there's no self-service takedown
-afterward — deliberate: without accounts, there's no reliable way to prove who authored a post, so
-an anon-callable "delete your own post" action would just be a public delete button anyone could
-use on anyone's post.
+"share this publicly?" confirmation.
+
+**Author controls (share keys).** There are no accounts, so authorship is proven by a secret key
+generated on the sharing device: only its SHA-256 is stored on the post (`owner_key_hash`); the
+key stays in "Shared by you" and its backup, and doubles as a *recovery code* (`<postId>.<key>`) the
+author can save and paste back in on another device. With the key an author can **hide** a post
+from Browse, **show it again**, or **edit** it (My Nouriva → Shared by you) — routes
+`/api/my/posts`, `/api/posts/:id/visibility` and `/api/posts/:id/edit`, which need
+`SUPABASE_SERVICE_ROLE_KEY`. Hiding never deletes: likes, reports and the key survive, and people
+who saved or liked the dish keep their copy. Showing again re-uses the same post and key (never
+mints a new one), is rate-limited (3 per day, 5-minute gap), and is refused for a post a moderator
+removed — `status = 'hidden'` (moderator) is separate from `author_hidden` (author). Edits pass the
+same baseline content filter and duplicate check as new posts. New shares are rate-limited by a
+database trigger (5 per device and 15 per IP per 24 h) and identical content is rejected; without
+accounts this is a deterrent, not a guarantee (clearing storage yields a new device id).
 
 Anyone can report a post from its detail page. There's no in-app admin UI in v1 — moderate via
 `curl` against the secret-gated `/api/admin/*` routes, using the `ADMIN_SECRET` you set:
@@ -173,12 +194,30 @@ revisiting if it matters more than expected.
 ## Recipe booklet (PDF)
 
 My Nouriva → "Recipe booklet (PDF)" lets you pick any mix of posts you've shared, posts you've
-reacted to, and local drafts, and generates a PDF with one nicely laid-out page per recipe
-(photo, the reflection as a pull-quote, ingredients, method, spirit tags). Generated entirely
-client-side — `@react-pdf/renderer` is lazy-loaded only when you actually generate one, so it
-never adds to the app's normal load. Chinese content gets a CJK-capable font (Noto Sans SC/TC,
-fetched from a CDN on demand) registered automatically based on your selected language; English
-uses the built-in font with no extra download. See `src/services/recipeBooklet.tsx`.
+reacted to, and saved dishes, and generates a magazine-style PDF: a cover (masthead, issue line,
+hero photo), a contents page, an optional editor's note (this week's story), one recipe feature per
+page (hero photo, pull-quote, ingredients sidebar, numbered method — layouts alternate), and a back
+cover with a dedication. Each recipe fits on one page (the type shrinks and the photo gives up height as needed) and shows its
+nutrition estimate when it has one. The Nouriva mark and a link to the app (https://nourivaveg.vercel.app) are on the cover and back
+cover. Choose a title, dedication and one of four colour themes. Generated
+entirely client-side — `@react-pdf/renderer` is lazy-loaded only when you generate one. Chinese
+gets Noto Serif/Sans SC/TC (fetched from a CDN on demand, plus the small punctuation subsets those
+fonts need); react-pdf can't wrap CJK without printing a stray "-" at each break, so Chinese
+paragraphs are wrapped by hand. See `src/services/recipeBooklet.tsx`.
+
+**Folder auto-backup** saves one `nouriva-backup.json` to a folder you choose, a moment after any change to
+drafts (with their full-size photos), "Shared by you" (with author keys), preferences (including the
+encrypted AI config), reactions or reports. Settings → "Restore from a backup folder" brings all of it
+back, photos included.
+
+## Stories
+
+The Stories tab shows one fixed, short reflective story per week of the year (52 in all, with
+reflective questions and a "cook something to match" button that opens Inspire me on the story's
+feeling). Not AI-generated: each is a traditional tale retold in our own words or an original
+written for Nouriva (labelled as such). Sources live in `src/data/stories-src/` (English +
+Traditional Chinese); `npm run build:stories` derives Simplified Chinese with OpenCC and writes
+`src/data/stories.json`. The Traditional/Simplified text deserves a native-speaker review.
 
 ## Out of scope / not built (v1)
 

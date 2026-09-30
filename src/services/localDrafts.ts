@@ -30,6 +30,18 @@ export async function saveDraftPhoto(blob: Blob): Promise<string> {
   return id;
 }
 
+/** Stores a photo under a known id — used when restoring a backup, so a
+ * restored draft's `photoDraftId` points at its photo again. */
+export async function putDraftPhoto(id: string, blob: Blob): Promise<void> {
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite');
+    tx.objectStore(STORE_NAME).put(blob, id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
 export async function getDraftPhoto(id: string): Promise<Blob | null> {
   const db = await openDb();
   return new Promise((resolve, reject) => {

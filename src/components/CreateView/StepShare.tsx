@@ -3,7 +3,8 @@ import type { Draft } from '../../types';
 import { useApp } from '../../context/AppContext';
 import { useT } from '../../hooks/useT';
 import { isSupabaseConfigured } from '../../services/supabase';
-import { createPost } from '../../services/postsApi';
+import { createPost, ShareError } from '../../services/postsApi';
+import { editPost } from '../../services/ownerApi';
 import { uploadPhoto } from '../../services/photoUpload';
 import { deleteDraftPhoto, getDraftPhoto } from '../../services/localDrafts';
 import { containsBlockedContent } from '../../utils/contentFilter';
@@ -18,7 +19,7 @@ export default function StepShare({
   onBack: () => void;
   onDone: () => void;
 }) {
-  const { markPublished } = useApp();
+  const { markPublished, deleteDraft } = useApp();
   const t = useT();
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,43 +28,62 @@ export default function StepShare({
     setPublishing(true);
     setError(null);
     try {
+      // A newly chosen photo is uploaded; otherwise an edit keeps the
+      // existing remote one (the draft preview is that https URL).
       let photoUrl: string | undefined;
       if (draft.photoDraftId) {
         const blob = await getDraftPhoto(draft.photoDraftId);
         if (blob) {
           photoUrl = await uploadPhoto(blob);
         }
+      } else if (draft.photoPreviewDataUrl?.startsWith('https://')) {
+        photoUrl = draft.photoPreviewDataUrl;
       }
 
-      const post = await createPost({
+      const content = {
         dishName: draft.dishName,
         ingredients: draft.ingredients,
         recipe: draft.recipe,
         reflection: draft.reflection,
         spiritTags: draft.spiritTags,
+        category: draft.category,
         nutrition: draft.nutrition,
         photoUrl,
-      });
+      };
 
-      if (draft.photoDraftId) {
-        deleteDraftPhoto(draft.photoDraftId).catch(() => {});
+      if (isEdit) {
+        await editPost(draft.sharedPostId!, draft.sharedPostKey!, content);
+        if (draft.photoDraftId) deleteDraftPhoto(draft.photoDraftId).catch(() => {});
+        deleteDraft(draft.id);
+      } else {
+        const { post, key } = await createPost(content);
+        if (draft.photoDraftId) deleteDraftPhoto(draft.photoDraftId).catch(() => {});
+        markPublished(draft.id, post.id, key);
       }
-      markPublished(draft.id, post.id);
       onDone();
     } catch (err: any) {
-      setError(err?.message || t.create.share.error);
+      const code = err instanceof ShareError ? err.code : undefined;
+      setError(
+        code === 'rate_limit' ? t.create.share.rateLimited
+        : code === 'duplicate' ? t.create.share.duplicate
+        : code === 'blocked' ? t.create.share.blockedContent
+        : code === 'removed' ? t.create.share.removedByModerator
+        : code === 'unavailable' ? t.create.share.editUnavailable
+        : t.create.share.error
+      );
     } finally {
       setPublishing(false);
     }
   }
 
+  const isEdit = Boolean(draft.sharedPostId && draft.sharedPostKey);
   const configured = isSupabaseConfigured();
   const blocked = containsBlockedContent(draft.dishName, draft.reflection, draft.ingredients, draft.recipe);
 
   return (
     <div>
       <h2 className="text-lg font-semibold text-ink-900 mb-1">{t.create.share.title}</h2>
-      <p className="text-sm text-ink-500 mb-4">{t.create.share.subtitle}</p>
+      <p className="text-sm text-ink-500 mb-4">{isEdit ? t.create.share.editingSubtitle : t.create.share.subtitle}</p>
 
       <div className="bg-linen-100 border border-linen-200 rounded-2xl overflow-hidden">
         {draft.photoPreviewDataUrl && (
@@ -71,6 +91,7 @@ export default function StepShare({
         )}
         <div className="p-4">
           <h3 className="font-semibold text-ink-900">{draft.dishName}</h3>
+          {draft.category && <p className="text-xs text-ink-500 mt-0.5">{t.categories[draft.category] || draft.category}</p>}
           <p className="mt-2 text-[15px] italic text-ink-700">"{draft.reflection}"</p>
           {draft.spiritTags.length > 0 && (
             <p className="mt-2 text-sm text-sage-600">✨ {draft.spiritTags.map(tag => t.spiritTags[tag] || tag).join(' · ')}</p>
@@ -81,7 +102,7 @@ export default function StepShare({
         </div>
       </div>
 
-      <p className="mt-4 text-xs text-ink-500">{t.create.share.irreversibleNote}</p>
+      {!isEdit && <p className="mt-4 text-xs text-ink-500">{t.create.share.irreversibleNote}</p>}
 
       {!configured && <p className="mt-2 text-sm text-clay-700">{t.create.share.notConfigured}</p>}
       {blocked && <p className="mt-2 text-sm text-clay-700">{t.create.share.blockedContent}</p>}
@@ -111,8 +132,8 @@ export default function StepShare({
             </button>
           ) : (
             <ConfirmButton
-              label={t.create.share.shareButton}
-              prompt={t.create.share.shareConfirmPrompt}
+              label={isEdit ? t.create.share.updateButton : t.create.share.shareButton}
+              prompt={isEdit ? t.create.share.updateConfirmPrompt : t.create.share.shareConfirmPrompt}
               onConfirm={share}
               disabled={!configured || blocked}
               className="bg-clay-600 hover:bg-clay-700 disabled:opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"

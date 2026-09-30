@@ -1,6 +1,8 @@
 import express from "express";
 import { put, del } from "@vercel/blob";
 import { createClient } from "@supabase/supabase-js";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { findDietViolation } from "./_dietFilter";
 
 // All API route handlers, as a standalone Express app with no listen()/Vite/
 // static-file serving of its own — shared by two hosts:
@@ -18,6 +20,8 @@ import { createClient } from "@supabase/supabase-js";
 // visitor and a working request), Vercel Blob photo uploads (needs a
 // server-held write token), and admin moderation (needs the Supabase
 // service role key, which must never reach the client).
+
+const CATEGORY_VOCAB = ["Main", "Soup", "Salad", "Breakfast", "Snack", "Dessert", "Bakery", "Drink"];
 
 const SPIRIT_TAG_VOCAB = [
   "Gratitude", "Peace", "Joy", "Compassion",
@@ -46,7 +50,7 @@ function getAiConfig(req?: express.Request): AiConfig | null {
 
   const baseUrl = (headerBaseUrl || process.env.AI_BASE_URL || 'https://api.groq.com/openai/v1').replace(/\/+$/, '');
   const apiKey = headerApiKey || process.env.AI_API_KEY;
-  const model = headerModel || process.env.AI_MODEL || 'llama-3.3-70b-versatile';
+  const model = headerModel || process.env.AI_MODEL || 'qwen/qwen3.8-27b';
 
   if (!apiKey) return null;
   return { baseUrl, apiKey, model };
@@ -58,9 +62,41 @@ function getAiConfig(req?: express.Request): AiConfig | null {
 // code fence if the model wraps its answer in one anyway (common even when
 // asked not to).
 function extractJson(text: string): any {
-  const cleaned = text.replace(/^```(json)?/i, '').replace(/```$/, '').trim();
-  return JSON.parse(cleaned);
+  // Reasoning models (e.g. Qwen3) may prefix the answer with a <think>…</think>
+  // block, and some wrap the JSON in prose — take the outermost {...} only.
+  const noThink = text.replace(/<think>[\s\S]*?<\/think>/gi, '');
+  const cleaned = noThink.replace(/^\s*```(json)?/i, '').replace(/```\s*$/, '').trim();
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
+  return JSON.parse(start >= 0 && end > start ? cleaned.slice(start, end + 1) : cleaned);
 }
+
+// Every AI-written value follows the app's language setting (the client
+// sends it with each request). JSON keys and fixed vocabularies stay English.
+function languageInstruction(lang: unknown): string {
+  if (lang === 'zh-Hant') return ' Write every text value in Traditional Chinese (繁體中文). JSON keys stay in English.';
+  if (lang === 'zh-Hans') return ' Write every text value in Simplified Chinese (简体中文). JSON keys stay in English.';
+  return ' Write every text value in English. JSON keys stay in English.';
+}
+
+const DIET_RULE = ' The dish must be strictly vegetarian in the Buddhist vegetarian style: no meat, poultry, fish or seafood, no fish sauce, oyster sauce or animal stock, and NONE of the five pungent vegetables — onion, garlic, chives, green onion (scallion) or leek — nor asafoetida (hing), including in sauces, pastes and stock powders. Eggs and dairy are allowed. Use ginger, mushrooms, herbs, spices, sesame, citrus and similar for depth of flavour instead.';
+
+function hashKey(key: string): string {
+  return createHash('sha256').update(key).digest('hex');
+}
+
+function keyMatches(storedHash: string | null | undefined, key: unknown): boolean {
+  if (!storedHash || typeof key !== 'string' || key.length < 16 || key.length > 200) return false;
+  const a = Buffer.from(hashKey(key));
+  const b = Buffer.from(storedHash);
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// Same list as src/utils/contentFilter.ts and the posts_no_blocked_content
+// CHECK in db/schema.sql — edits made through the owner route are checked
+// here too, so editing can't be used to slip past the baseline filter.
+const BLOCKED_PATTERN =
+  /fuck|shit|bitch|asshole|bastard|cunt|dick|piss|nigger|nigga|faggot|retard|whore|slut|rape|kill\s*yourself|\bkys\b|操你|傻逼|傻屄|婊子|賤人|贱人|白痴|智障|死全家|干你娘|幹你娘/i;
 
 async function callChatCompletion(config: AiConfig, system: string, userContent: unknown): Promise<string> {
   const res = await fetch(`${config.baseUrl}/chat/completions`, {
@@ -139,7 +175,8 @@ export function createApiApp() {
   // keeps that logic in one place rather than duplicated across four.
   app.post("/api/ai/assist", async (req, res) => {
     try {
-      const { action, text, dishName, spiritTag } = req.body || {};
+      const { action, text, dishName, spiritTag, language } = req.body || {};
+      const langRule = languageInstruction(language);
 
       const config = getAiConfig(req);
       if (!config) {
@@ -156,19 +193,19 @@ export function createApiApp() {
       switch (action) {
         case "improve_writing":
           if (!text) return res.status(400).json({ error: "text is required" });
-          systemInstruction = `You gently polish a short personal reflection about a vegetarian dish and the feeling or experience it inspired, for the app Nouriva. Preserve the writer's own voice, meaning and first-person perspective — only smooth the wording. Do not invent details, emotions or spiritual claims the writer didn't express. Do not add religious framing. Keep it roughly the same length. Return ONLY a strict JSON object, no markdown, no commentary: { "result": string }.`;
+          systemInstruction = `You gently polish a short personal reflection about a vegetarian dish and the feeling or experience it inspired, for the app Nouriva. Preserve the writer's own voice, meaning and first-person perspective — only smooth the wording. Do not invent details, emotions or spiritual claims the writer didn't express. Do not add religious framing. Keep it roughly the same length. Return ONLY a strict JSON object, no markdown, no commentary: { "result": string }. Keep the writer's own language — do not translate.`;
           userPrompt = text;
           break;
 
         case "suggest_title":
           if (!text && !dishName) return res.status(400).json({ error: "text or dishName is required" });
-          systemInstruction = `You suggest 3 short, warm, understated titles (3-6 words each) for a Nouriva post about a vegetarian dish and the personal reflection it inspired. No clickbait, no exclamation marks, no religious claims — quiet and genuine in tone. Return ONLY a strict JSON object, no markdown, no commentary: { "titles": string[] }.`;
+          systemInstruction = `You suggest 3 short, warm, understated titles (3-6 words each) for a Nouriva post about a vegetarian dish and the personal reflection it inspired. No clickbait, no exclamation marks, no religious claims — quiet and genuine in tone. Return ONLY a strict JSON object, no markdown, no commentary: { "titles": string[] }.${langRule}`;
           userPrompt = `Dish: ${dishName || "(untitled)"}\nReflection: ${text || "(none yet)"}`;
           break;
 
         case "help_express":
           if (!text) return res.status(400).json({ error: "text is required" });
-          systemInstruction = `The writer has jotted a rough, partial note about what they felt while cooking, eating or sharing a vegetarian dish. Gently expand it into 2-4 warm, genuine sentences in first person, staying strictly within the feeling/meaning they already hinted at — never inventing a spiritual or religious interpretation they didn't suggest themselves. Return ONLY a strict JSON object, no markdown, no commentary: { "result": string }.`;
+          systemInstruction = `The writer has jotted a rough, partial note about what they felt while cooking, eating or sharing a vegetarian dish. Gently expand it into 2-4 warm, genuine sentences in first person, staying strictly within the feeling/meaning they already hinted at — never inventing a spiritual or religious interpretation they didn't suggest themselves. Return ONLY a strict JSON object, no markdown, no commentary: { "result": string }.${langRule}`;
           userPrompt = text;
           break;
 
@@ -182,12 +219,31 @@ export function createApiApp() {
           if (!spiritTag || !SPIRIT_TAG_VOCAB.includes(spiritTag)) {
             return res.status(400).json({ error: "spiritTag must be one of: " + SPIRIT_TAG_VOCAB.join(", ") });
           }
-          systemInstruction = `You suggest ONE simple, practical vegetarian dish idea for someone who wants to cook something that evokes the feeling "${spiritTag}", for the app Nouriva. Use common, easy-to-find ingredients — not an exotic or hard-to-source dish. Keep it achievable for a home cook. Do not add religious framing or claim the dish itself has spiritual properties — just explain briefly, in warm plain language, why preparing or sharing this dish suits that feeling (e.g. the ritual of making it, who it's shared with, what it's made of). Return ONLY a strict JSON object, no markdown, no commentary: { "dishName": string, "blurb": string (1-2 sentences), "ingredients": string (a short newline-separated list), "recipe": string (a short rough method, 2-4 sentences) }.`;
+          systemInstruction = `You suggest ONE simple, practical vegetarian dish idea for someone who wants to cook something that evokes the feeling "${spiritTag}", for the app Nouriva. Use common, easy-to-find ingredients — not an exotic or hard-to-source dish. Keep it achievable for a home cook. Do not add religious framing or claim the dish itself has spiritual properties — just explain briefly, in warm plain language, why preparing or sharing this dish suits that feeling (e.g. the ritual of making it, who it's shared with, what it's made of). Return ONLY a strict JSON object, no markdown, no commentary: { "dishName": string, "blurb": string (1-2 sentences), "ingredients": string (a short newline-separated list), "recipe": string (a short rough method, 2-4 sentences) }.${DIET_RULE}${langRule}`;
           userPrompt = `Feeling: ${spiritTag}`;
           break;
 
         default:
           return res.status(400).json({ error: "Unknown action" });
+      }
+
+      if (action === "inspire_dish") {
+        // A model only proposes: every suggestion is scanned by the
+        // deterministic diet filter before it reaches the user. A failing
+        // one is regenerated (told what to avoid); after 3 tries we give up
+        // rather than show a dish that breaks the rule.
+        let feedback = "";
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const content = await callChatCompletion(config, systemInstruction + feedback, userPrompt);
+          const suggestion = extractJson(content);
+          for (const k of ["ingredients", "recipe"]) {
+            if (Array.isArray(suggestion[k])) suggestion[k] = suggestion[k].join("\n");
+          }
+          const violation = findDietViolation([suggestion.dishName, suggestion.blurb, suggestion.ingredients, suggestion.recipe].filter(Boolean).join(" "));
+          if (!violation) return res.json(suggestion);
+          feedback = ` Your previous idea used "${violation}", which is not allowed. Suggest a different dish with none of the forbidden ingredients.`;
+        }
+        return res.status(502).json({ error: "Could not produce a diet-compliant suggestion", code: "DIET_VIOLATION" });
       }
 
       const content = await callChatCompletion(config, systemInstruction, userPrompt);
@@ -205,7 +261,7 @@ export function createApiApp() {
   // authoritative; Nouriva isn't a recipe or nutrition database.
   app.post("/api/ai/identify-food", async (req, res) => {
     try {
-      const { imageBase64, mimeType = 'image/jpeg' } = req.body || {};
+      const { imageBase64, mimeType = 'image/jpeg', language } = req.body || {};
       if (!imageBase64) return res.status(400).json({ error: "imageBase64 is required" });
 
       const config = getAiConfig(req);
@@ -228,7 +284,7 @@ export function createApiApp() {
       if (detectedMime === 'image/jpg') detectedMime = 'image/jpeg';
       cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
 
-      const systemInstruction = `You are a careful assistant identifying a single vegetarian dish from a photo, for the app Nouriva. Name the specific dish, list its likely main ingredients, sketch a short rough method, and estimate calories/macros for the quantity visible (using scale cues like the plate/bowl size; account for likely hidden ingredients such as cooking oil or dressing rather than only what's directly visible — when uncertain, prefer a realistic middle estimate). Everything here is a starting draft the person will review and edit themselves, not a final answer — keep it concise and plausible rather than exhaustive. Return ONLY a strict JSON object, no markdown, no commentary: { "dishName": string, "ingredients": string (short newline-separated list), "recipe": string (2-4 sentence rough method), "calories": number, "carbsGrams": number, "proteinGrams": number, "fatGrams": number, "fiberGrams": number }.`;
+      const systemInstruction = `You are a careful assistant identifying a single vegetarian dish from a photo, for the app Nouriva. Name the specific dish, list its likely main ingredients, sketch a short rough method, and estimate calories/macros for the quantity visible (using scale cues like the plate/bowl size; account for likely hidden ingredients such as cooking oil or dressing rather than only what's directly visible — when uncertain, prefer a realistic middle estimate). Everything here is a starting draft the person will review and edit themselves, not a final answer — keep it concise and plausible rather than exhaustive. Return ONLY a strict JSON object, no markdown, no commentary: { "dishName": string, "ingredients": string (short newline-separated list), "recipe": string (2-4 sentence rough method), "calories": number, "carbsGrams": number, "proteinGrams": number, "fatGrams": number, "fiberGrams": number }.${languageInstruction(language)}`;
 
       const content = await callChatCompletion(config, systemInstruction, [
         { type: 'text', text: 'Identify this dish and draft the fields described.' },
@@ -283,6 +339,128 @@ export function createApiApp() {
       }
     }
   );
+
+  // --- Author controls (hide / show again / edit) ---------------------
+  //
+  // Sharing is anonymous, so authorship is proven by a secret key the sharing
+  // device generated (and keeps, in "Shared by you" + its backup). Only the
+  // key's SHA-256 is stored on the post (posts.owner_key_hash). These routes
+  // run with the service role and check the key themselves, since anon has
+  // no UPDATE rights at all. Design rules:
+  //  - Hiding never deletes: likes, reports and the key survive, so the post
+  //    can be shown again — with the SAME key, never a new one (a re-share
+  //    can't be used to mint fresh posts).
+  //  - A moderator removal (status = 'hidden') is sticky: the author can't
+  //    undo it.
+  //  - Showing again is rate-limited; hiding (the safe direction) is not.
+  //  - Edits go through the same baseline content filter as new posts.
+  const OWNER_COLUMNS = 'id, dish_name, description, photo_url, ingredients, recipe, reflection, spirit_tags, category, nutrition, created_at, reaction_felt_count, reaction_inspired_count, reaction_thanks_count, report_count, status, author_hidden';
+  const RESHARE_LIMIT_PER_DAY = 3;
+  const RESHARE_MIN_GAP_MS = 5 * 60 * 1000;
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  app.post("/api/my/posts", async (req, res) => {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return res.status(503).json({ error: "OWNER_ROUTES_UNAVAILABLE" });
+    const refs = Array.isArray(req.body?.refs) ? req.body.refs.slice(0, 100) : [];
+    const valid = refs.filter((r: any) => r && typeof r.id === 'string' && typeof r.key === 'string');
+    if (valid.length === 0) return res.json({ posts: [] });
+    const { data, error } = await supabase
+      .from('posts')
+      .select(OWNER_COLUMNS + ', owner_key_hash')
+      .in('id', valid.map((r: any) => r.id));
+    if (error) return res.status(500).json({ error: error.message });
+    const keyById = new Map<string, string>(valid.map((r: any) => [r.id, r.key]));
+    const posts = (data || [])
+      .filter((row: any) => keyMatches(row.owner_key_hash, keyById.get(row.id)))
+      .map(({ owner_key_hash, ...rest }: any) => rest);
+    res.json({ posts });
+  });
+
+  app.post("/api/posts/:id/visibility", async (req, res) => {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return res.status(503).json({ error: "OWNER_ROUTES_UNAVAILABLE" });
+    const { key, hidden } = req.body || {};
+    if (typeof hidden !== 'boolean') return res.status(400).json({ error: "hidden must be true or false" });
+
+    const { data: row, error } = await supabase
+      .from('posts')
+      .select('owner_key_hash, status, author_hidden, reshare_window_start, reshare_count, last_toggled_at')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!row || !keyMatches(row.owner_key_hash, key)) return res.status(403).json({ error: "Forbidden" });
+    if (row.status === 'hidden') {
+      return res.status(403).json({ error: "Removed by a moderator", code: "REMOVED_BY_MODERATOR" });
+    }
+    if (row.author_hidden === hidden) return res.json({ status: "ok", author_hidden: hidden });
+
+    const now = Date.now();
+    const update: Record<string, unknown> = { author_hidden: hidden, last_toggled_at: new Date(now).toISOString() };
+    if (!hidden) {
+      // Showing again: cap per day and require a short gap after hiding.
+      const windowStart = row.reshare_window_start ? Date.parse(row.reshare_window_start) : 0;
+      const inWindow = windowStart && now - windowStart < DAY_MS;
+      const count = inWindow ? row.reshare_count : 0;
+      const lastToggle = row.last_toggled_at ? Date.parse(row.last_toggled_at) : 0;
+      if (count >= RESHARE_LIMIT_PER_DAY || (lastToggle && now - lastToggle < RESHARE_MIN_GAP_MS)) {
+        return res.status(429).json({ error: "Too many re-shares", code: "TOGGLE_LIMIT" });
+      }
+      update.reshare_window_start = new Date(inWindow ? windowStart : now).toISOString();
+      update.reshare_count = count + 1;
+    }
+    const { error: updateError } = await supabase.from('posts').update(update).eq('id', req.params.id);
+    if (updateError) return res.status(500).json({ error: updateError.message });
+    res.json({ status: "ok", author_hidden: hidden });
+  });
+
+  app.post("/api/posts/:id/edit", async (req, res) => {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return res.status(503).json({ error: "OWNER_ROUTES_UNAVAILABLE" });
+    const { key, dishName, description, photoUrl, ingredients, recipe, reflection, spiritTags, category, nutrition } = req.body || {};
+
+    if (typeof dishName !== 'string' || !dishName.trim() || typeof reflection !== 'string' || !reflection.trim()) {
+      return res.status(400).json({ error: "dishName and reflection are required" });
+    }
+    if (category != null && !CATEGORY_VOCAB.includes(category)) return res.status(400).json({ error: "Unknown category" });
+    const tags = Array.isArray(spiritTags) ? spiritTags.filter((t: unknown) => SPIRIT_TAG_VOCAB.includes(t as string)) : [];
+    const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null);
+    if (BLOCKED_PATTERN.test([dishName, description, reflection, ingredients, recipe].filter(Boolean).join(' '))) {
+      return res.status(422).json({ error: "Blocked content", code: "BLOCKED_CONTENT" });
+    }
+    if (typeof photoUrl === 'string' && photoUrl && !/^https:\/\//i.test(photoUrl)) {
+      return res.status(400).json({ error: "photoUrl must be an https URL" });
+    }
+
+    const { data: row, error } = await supabase
+      .from('posts')
+      .select('owner_key_hash, status')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!row || !keyMatches(row.owner_key_hash, key)) return res.status(403).json({ error: "Forbidden" });
+    if (row.status === 'hidden') {
+      return res.status(403).json({ error: "Removed by a moderator", code: "REMOVED_BY_MODERATOR" });
+    }
+
+    const { error: updateError } = await supabase.from('posts').update({
+      dish_name: dishName.trim(),
+      description: str(description),
+      photo_url: str(photoUrl),
+      ingredients: str(ingredients),
+      recipe: str(recipe),
+      reflection: reflection.trim(),
+      spirit_tags: tags,
+      category: category ?? null,
+      nutrition: nutrition && typeof nutrition === 'object' ? nutrition : null,
+    }).eq('id', req.params.id);
+    if (updateError) {
+      const msg = String(updateError.message || '');
+      if (msg.includes('nouriva_duplicate')) return res.status(409).json({ error: "Duplicate", code: "DUPLICATE" });
+      return res.status(500).json({ error: msg });
+    }
+    res.json({ status: "ok" });
+  });
 
   // --- Admin moderation (secret-header-gated, no UI in v1 — see README) ---
 

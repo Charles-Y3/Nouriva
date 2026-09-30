@@ -10,7 +10,8 @@
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "build:stories": "node scripts/build-stories.mjs"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.9.0",
@@ -33,6 +34,7 @@
     "@types/react-dom": "^19.0.0",
     "@vercel/node": "^5.9.9",
     "esbuild": "^0.25.0",
+    "opencc-js": "^1.4.2",
     "tsx": "^4.21.0",
     "typescript": "~5.8.2"
   }

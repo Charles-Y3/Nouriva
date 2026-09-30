@@ -72,7 +72,13 @@ export default function StepPhoto({
         nutrition: result.nutrition,
       });
     } catch (err) {
-      setIdentifyError(err instanceof AiAssistError && err.reason === 'no_api_key' ? t.aiAssist.noKey : t.aiAssist.failed);
+      // An 'unknown' failure is most often a provider rejecting the image
+      // (text-only model), so point at the model rather than a bare failure.
+      setIdentifyError(
+        err instanceof AiAssistError && err.reason === 'no_api_key' ? t.aiAssist.noKey
+        : err instanceof AiAssistError && err.reason === 'unknown' ? t.create.photo.visionFailed
+        : t.aiAssist.failed
+      );
     } finally {
       setIdentifying(false);
     }

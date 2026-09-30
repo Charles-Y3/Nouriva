@@ -11,10 +11,12 @@ import ConsentNotice from './ConsentNotice';
 import PostCard from './PostCard';
 
 export default function InspireMeModal({
+  initialTag,
   onClose,
   onCookThis,
   onOpenPost,
 }: {
+  initialTag?: string | null;
   onClose: () => void;
   onCookThis: (draftId: string) => void;
   onOpenPost: (id: string) => void;
@@ -26,7 +28,7 @@ export default function InspireMeModal({
   const [showConsent, setShowConsent] = useState(!isAiConsentShown());
 
   const [suggestion, setSuggestion] = useState<DishSuggestion | null>(null);
-  const [suggestionState, setSuggestionState] = useState<'idle' | 'loading' | 'no_key' | 'error'>('idle');
+  const [suggestionState, setSuggestionState] = useState<'idle' | 'loading' | 'no_key' | 'diet' | 'error'>('idle');
 
   const [communityPosts, setCommunityPosts] = useState<Post[] | null>(null);
   const [communityLoading, setCommunityLoading] = useState(false);
@@ -54,6 +56,8 @@ export default function InspireMeModal({
     } catch (err) {
       if (err instanceof AiAssistError && err.reason === 'no_api_key') {
         setSuggestionState('no_key');
+      } else if (err instanceof AiAssistError && err.reason === 'diet') {
+        setSuggestionState('diet');
       } else {
         setSuggestionState('error');
       }
@@ -93,6 +97,12 @@ export default function InspireMeModal({
     onCookThis(draft.id);
   }
 
+  // Opened from a Story with a feeling already chosen.
+  useEffect(() => {
+    if (initialTag && (SPIRIT_TAGS as readonly string[]).includes(initialTag)) pickTag(initialTag);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Escape closes, same as clicking the backdrop / the X.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -111,7 +121,8 @@ export default function InspireMeModal({
             ✕
           </button>
         </div>
-        <p className="text-sm text-ink-500 mb-4">{t.inspireMe.subtitle}</p>
+        <p className="text-sm text-ink-500 mb-1">{t.inspireMe.subtitle}</p>
+        <p className="text-xs text-sage-600 mb-4">{t.inspireMe.dietNote}</p>
 
         <div className="flex flex-wrap gap-2 mb-2">
           {SPIRIT_TAGS.map(tag => (
@@ -147,6 +158,10 @@ export default function InspireMeModal({
 
             {suggestionState === 'no_key' && (
               <p className="text-sm text-ink-500">{t.inspireMe.noKey}</p>
+            )}
+
+            {suggestionState === 'diet' && (
+              <p className="text-sm text-clay-700">{t.inspireMe.dietFailed}</p>
             )}
 
             {suggestionState === 'error' && (

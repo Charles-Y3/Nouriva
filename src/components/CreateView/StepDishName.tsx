@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { CATEGORIES } from '../../types';
 import type { Draft } from '../../types';
 import { useT } from '../../hooks/useT';
 
@@ -28,6 +29,20 @@ export default function StepDishName({
         maxLength={120}
         className="w-full rounded-xl border border-linen-200 bg-linen-100 px-4 py-3 text-base text-ink-900 placeholder:text-ink-500/60"
       />
+
+      <label className="mt-4 block text-sm text-ink-500">
+        {t.create.dishName.categoryLabel}
+        <select
+          value={draft.category ?? ''}
+          onChange={e => update({ category: e.target.value || undefined })}
+          className="mt-1 w-full rounded-xl border border-linen-200 bg-linen-100 px-4 py-2.5 text-sm text-ink-900"
+        >
+          <option value="">{t.create.dishName.categoryPlaceholder}</option>
+          {CATEGORIES.map(c => (
+            <option key={c} value={c}>{t.categories[c]}</option>
+          ))}
+        </select>
+      </label>
 
       {showMore ? (
         <div className="mt-4 space-y-3">

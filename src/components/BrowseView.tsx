@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
-import { fetchRecentPosts, searchPosts } from '../services/postsApi';
+import { queryPosts } from '../services/postsApi';
 import { isSupabaseConfigured } from '../services/supabase';
-import { SPIRIT_TAGS } from '../types';
-import type { Post } from '../types';
+import { CATEGORIES, SPIRIT_TAGS } from '../types';
+import type { BrowseSort, Post } from '../types';
 import { useT } from '../hooks/useT';
 import PostCard from './PostCard';
 import EmptyState from './EmptyState';
@@ -11,22 +11,37 @@ import InspireMeModal from './InspireMeModal';
 // Merged Home + Explore: intro/CTA up top, then search + tag filter + the
 // full browsable list — one screen for "see recent" and "find something
 // specific" rather than two separate views with overlapping purpose.
+const selectClass =
+  'w-full min-w-0 rounded-full border border-linen-200 bg-linen-100 px-3 py-2 text-sm text-ink-700 focus:border-sage-400';
+
 export default function BrowseView({
   onCreate,
   onOpenPost,
   onInspireDraft,
+  inspireTag,
+  onInspireTagHandled,
 }: {
   onCreate: () => void;
   onOpenPost: (id: string) => void;
   onInspireDraft: (draftId: string) => void;
+  inspireTag?: string | null;
+  onInspireTagHandled?: () => void;
 }) {
   const t = useT();
   const [posts, setPosts] = useState<Post[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [activeTag, setActiveTag] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] = useState<string | null>(null);
+  const [sort, setSort] = useState<BrowseSort>('recent');
   const [browsing, setBrowsing] = useState(false);
   const [showInspire, setShowInspire] = useState(false);
+
+  // A Story's "cook something to match" lands here with a feeling to open
+  // Inspire me on.
+  useEffect(() => {
+    if (inspireTag) setShowInspire(true);
+  }, [inspireTag]);
 
   // Debounced: re-runs whenever the query or tag changes, including back to
   // both empty — that "back to empty" case must re-fetch the plain recent
@@ -38,14 +53,19 @@ export default function BrowseView({
       setError('not_configured');
       return;
     }
-    const isFilteringNow = Boolean(query.trim() || activeTag);
+    const isFilteringNow = Boolean(query.trim() || activeTag || activeCategory);
     setBrowsing(isFilteringNow);
+    setError(null);
     const handle = setTimeout(() => {
-      const fetch = isFilteringNow ? searchPosts(query, activeTag) : fetchRecentPosts(12);
-      fetch.then(setPosts).catch(() => setError('load_failed'));
-    }, isFilteringNow ? 300 : 0);
+      // The plain default feed stays small and quick; any filter or a
+      // non-default sort shows the full matching set.
+      const plainFeed = !isFilteringNow && sort === 'recent';
+      queryPosts({ query, tag: activeTag, category: activeCategory, sort, limit: plainFeed ? 12 : undefined })
+        .then(setPosts)
+        .catch(() => setError('load_failed'));
+    }, query.trim() ? 300 : 0);
     return () => clearTimeout(handle);
-  }, [query, activeTag]);
+  }, [query, activeTag, activeCategory, sort]);
 
   const isFiltering = useMemo(() => browsing, [browsing]);
 
@@ -74,7 +94,11 @@ export default function BrowseView({
 
       {showInspire && (
         <InspireMeModal
-          onClose={() => setShowInspire(false)}
+          initialTag={inspireTag}
+          onClose={() => {
+            setShowInspire(false);
+            onInspireTagHandled?.();
+          }}
           onCookThis={(draftId) => {
             setShowInspire(false);
             onInspireDraft(draftId);
@@ -91,30 +115,38 @@ export default function BrowseView({
             placeholder={t.browse.searchPlaceholder}
             className="w-full rounded-full border border-linen-200 bg-linen-100 px-4 py-2.5 text-sm placeholder:text-ink-500/60"
           />
-          <div className="flex flex-wrap gap-2">
-            <button
-              onClick={() => setActiveTag(null)}
-              className={`rounded-full px-3 py-1 text-xs border transition-colors ${
-                activeTag === null
-                  ? 'bg-sage-500 border-sage-500 text-linen-50'
-                  : 'bg-linen-100 border-linen-200 text-ink-700 hover:border-sage-400'
-              }`}
+          <div className="grid grid-cols-3 gap-2">
+            <select
+              value={activeTag ?? ''}
+              onChange={e => setActiveTag(e.target.value || null)}
+              aria-label={t.browse.feelingLabel}
+              className={selectClass}
             >
-              {t.browse.allTags}
-            </button>
-            {SPIRIT_TAGS.map(tag => (
-              <button
-                key={tag}
-                onClick={() => setActiveTag(prev => (prev === tag ? null : tag))}
-                className={`rounded-full px-3 py-1 text-xs border transition-colors ${
-                  activeTag === tag
-                    ? 'bg-sage-500 border-sage-500 text-linen-50'
-                    : 'bg-linen-100 border-linen-200 text-ink-700 hover:border-sage-400'
-                }`}
-              >
-                {t.spiritTags[tag]}
-              </button>
-            ))}
+              <option value="">{t.browse.anyFeeling}</option>
+              {SPIRIT_TAGS.map(tag => (
+                <option key={tag} value={tag}>{t.spiritTags[tag]}</option>
+              ))}
+            </select>
+            <select
+              value={activeCategory ?? ''}
+              onChange={e => setActiveCategory(e.target.value || null)}
+              aria-label={t.browse.categoryLabel}
+              className={selectClass}
+            >
+              <option value="">{t.browse.allCategories}</option>
+              {CATEGORIES.map(c => (
+                <option key={c} value={c}>{t.categories[c]}</option>
+              ))}
+            </select>
+            <select
+              value={sort}
+              onChange={e => setSort(e.target.value as BrowseSort)}
+              aria-label={t.browse.sortLabel}
+              className={selectClass}
+            >
+              <option value="recent">{t.browse.sortRecent}</option>
+              <option value="popular">{t.browse.sortPopular}</option>
+            </select>
           </div>
         </div>
       )}

@@ -4,7 +4,13 @@ import { useT } from '../hooks/useT';
 import { fetchPostById } from '../services/postsApi';
 import { getDraftPhoto, blobToDataUrl } from '../services/localDrafts';
 import type { BookletItem } from '../services/recipeBooklet';
+import { BOOKLET_THEMES, type BookletThemeId } from '../services/bookletThemes';
+import { STORIES, currentStoryWeek, storyText } from '../data/stories';
 import type { Draft, Post } from '../types';
+
+// Printed (and linked) on the booklet's back cover — the deployed app, not
+// whatever origin the booklet happens to be generated from (e.g. localhost).
+const APP_URL = 'https://nourivaveg.vercel.app';
 
 type PoolKey = 'shared' | 'liked' | 'drafts';
 
@@ -22,6 +28,10 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [title, setTitle] = useState('');
+  const [dedication, setDedication] = useState('');
+  const [theme, setTheme] = useState<BookletThemeId>('forest');
+  const [includeStory, setIncludeStory] = useState(false);
 
   const likedPostIds = useMemo(() => {
     const ids = new Set<string>();
@@ -96,15 +106,39 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
           recipe: draft.recipe,
           spiritTags: draft.spiritTags,
           spiritTagLabels: t.spiritTags,
+          categoryLabel: draft.category ? t.categories[draft.category] : undefined,
           nutrition: draft.nutrition,
         });
       }
 
       const { generateBookletPdf } = await import('../services/recipeBooklet');
-      const blob = await generateBookletPdf(items, preferences.language, {
-        ingredientsHeading: t.postDetail.ingredientsHeading,
-        recipeHeading: t.postDetail.recipeHeading,
-        footer: t.appName,
+      const story = includeStory ? storyText(STORIES[currentStoryWeek() - 1], preferences.language) : undefined;
+      const blob = await generateBookletPdf(items, {
+        title: title.trim() || t.booklet.defaultTitle,
+        dedication: dedication.trim() || undefined,
+        theme,
+        editorNote: story,
+        language: preferences.language,
+        copy: {
+          ingredientsHeading: t.postDetail.ingredientsHeading,
+          recipeHeading: t.postDetail.recipeHeading,
+          contentsHeading: t.booklet.contentsHeading,
+          editorNoteHeading: t.booklet.editorNoteHeading,
+          questionsHeading: t.stories.questionsHeading,
+          recipeCount: t.booklet.recipeCount,
+          nutritionHeading: t.postDetail.nutritionHeading,
+          nutritionLabels: {
+            calories: preferences.language === 'en' ? 'kcal' : '大卡',
+            protein: t.nutritionShort.protein,
+            carbs: t.nutritionShort.carbs,
+            fat: t.nutritionShort.fat,
+            fiber: t.nutritionShort.fiber,
+          },
+          madeWith: t.booklet.madeWith,
+          tagline: t.tagline,
+        },
+        logoSrc: `${window.location.origin}/icon-192.png`,
+        appUrl: APP_URL,
       });
 
       const url = URL.createObjectURL(blob);
@@ -131,6 +165,7 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
       recipe: post.recipe || undefined,
       spiritTags: post.spirit_tags,
       spiritTagLabels: t.spiritTags,
+      categoryLabel: post.category ? t.categories[post.category] : undefined,
       nutrition: post.nutrition,
     };
   }
@@ -185,6 +220,56 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
             <Section title={t.myNouriva.draftsHeading} pool="drafts" ids={drafts.map((d: Draft) => d.id)} labelFor={id => drafts.find((d: Draft) => d.id === id)?.dishName || t.booklet.untitledDraft} />
           </>
         )}
+
+        <div className="mt-2 mb-4 space-y-3 border-t border-linen-200 pt-4">
+          <label className="block text-xs text-ink-500">
+            {t.booklet.titleLabel}
+            <input
+              value={title}
+              onChange={e => setTitle(e.target.value)}
+              placeholder={t.booklet.defaultTitle}
+              maxLength={60}
+              className="mt-1 w-full rounded-lg border border-linen-200 bg-linen-100 px-3 py-2 text-sm text-ink-900"
+            />
+          </label>
+          <label className="block text-xs text-ink-500">
+            {t.booklet.dedicationLabel}
+            <input
+              value={dedication}
+              onChange={e => setDedication(e.target.value)}
+              placeholder={t.booklet.dedicationPlaceholder}
+              maxLength={140}
+              className="mt-1 w-full rounded-lg border border-linen-200 bg-linen-100 px-3 py-2 text-sm text-ink-900"
+            />
+          </label>
+          <div>
+            <p className="text-xs text-ink-500 mb-1.5">{t.booklet.themeLabel}</p>
+            <div className="flex flex-wrap gap-2">
+              {(Object.keys(BOOKLET_THEMES) as BookletThemeId[]).map(id => {
+                const label = t.booklet['theme' + id.charAt(0).toUpperCase() + id.slice(1)];
+                const active = theme === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => setTheme(id)}
+                    aria-pressed={active}
+                    className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                      active ? 'border-clay-600 text-ink-900' : 'border-linen-200 text-ink-700 hover:border-sage-400'
+                    }`}
+                  >
+                    <span className="inline-block w-3.5 h-3.5 rounded-full" style={{ backgroundColor: BOOKLET_THEMES[id].deep }} />
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+          <label className="flex items-center gap-2.5 text-sm text-ink-700 cursor-pointer">
+            <input type="checkbox" checked={includeStory} onChange={e => setIncludeStory(e.target.checked)} className="accent-clay-600" />
+            {t.booklet.includeStory}
+          </label>
+        </div>
 
         {error && <p className="text-sm text-clay-700 mb-3">{error}</p>}
 

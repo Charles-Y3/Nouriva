@@ -1,4 +1,4 @@
-export type NavTab = 'browse' | 'create' | 'my-nouriva' | 'settings';
+export type NavTab = 'browse' | 'create' | 'stories' | 'my-nouriva' | 'settings';
 
 export type Language = 'en' | 'zh-Hant' | 'zh-Hans';
 
@@ -7,6 +7,13 @@ export const SPIRIT_TAGS = [
   'Connection', 'Awareness', 'Contentment', 'Inspiration',
 ] as const;
 export type SpiritTag = typeof SPIRIT_TAGS[number];
+
+// One category per dish. Stored as these English ids; labels are translated
+// for display (see i18n `categories`).
+export const CATEGORIES = ['Main', 'Soup', 'Salad', 'Breakfast', 'Snack', 'Dessert', 'Bakery', 'Drink'] as const;
+export type Category = typeof CATEGORIES[number];
+
+export type BrowseSort = 'recent' | 'popular';
 
 export type ReactionType = 'felt' | 'inspired' | 'thanks';
 
@@ -34,13 +41,17 @@ export interface Post {
   recipe: string | null;
   reflection: string;
   spirit_tags: string[];
+  category: string | null;
   nutrition: NutritionEstimate | null;
   created_at: string;
   reaction_felt_count: number;
   reaction_inspired_count: number;
   reaction_thanks_count: number;
   report_count: number;
+  // `status` is the moderator's switch (hidden = removed by a moderator,
+  // sticky); `author_hidden` is the author's own hide/show switch.
   status: 'visible' | 'hidden';
+  author_hidden: boolean;
 }
 
 // An in-progress, unpublished post — local-only until Share.
@@ -53,7 +64,12 @@ export interface Draft {
   ingredients?: string;
   recipe?: string;
   spiritTags: string[];
+  category?: string;
   nutrition?: NutritionEstimate;
+  // Set when this draft is an edit of an already-shared post: sharing it
+  // updates that post (same id, same key) instead of creating a new one.
+  sharedPostId?: string;
+  sharedPostKey?: string;
   createdAt: number;
   updatedAt: number;
 }
@@ -61,6 +77,10 @@ export interface Draft {
 export interface MyPostRef {
   id: string;
   publishedAt: number;
+  // Secret that proves authorship (only its SHA-256 is stored server-side).
+  // Missing on posts shared before share keys existed — those have no
+  // hide/edit controls.
+  key?: string;
 }
 
 // User-supplied AI provider config — deliberately generic, not tied to one

@@ -2,7 +2,7 @@ import { useT } from '../hooks/useT';
 import { useApp } from '../context/AppContext';
 import { FONT_SIZES } from '../types';
 
-export default function Header() {
+export default function Header({ onOpenSettings, settingsActive }: { onOpenSettings: () => void; settingsActive: boolean }) {
   const t = useT();
   const { preferences, updatePreferences } = useApp();
 
@@ -38,6 +38,17 @@ export default function Header() {
             className="w-7 h-7 flex items-center justify-center rounded-full border border-linen-200 text-ink-700 text-sm hover:border-sage-400 disabled:opacity-30 disabled:hover:border-linen-200"
           >
             A<span className="text-[10px] align-top">+</span>
+          </button>
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            aria-label={t.common.openSettings}
+            title={t.common.openSettings}
+            className={`w-7 h-7 ml-1 flex items-center justify-center rounded-full border text-base transition-colors ${
+              settingsActive ? 'border-clay-600 text-clay-700' : 'border-linen-200 text-ink-700 hover:border-sage-400'
+            }`}
+          >
+            ⚙︎
           </button>
         </div>
       </div>

@@ -1,7 +1,7 @@
 import { decryptForDevice } from './deviceKeyStore';
 import type { NutritionEstimate } from '../types';
 
-export type AiUnavailableReason = 'no_api_key' | 'rate_limited' | 'network' | 'unknown';
+export type AiUnavailableReason = 'no_api_key' | 'rate_limited' | 'network' | 'diet' | 'unknown';
 
 export class AiAssistError extends Error {
   reason: AiUnavailableReason;
@@ -32,13 +32,23 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
   return headers;
 }
 
+// Everything the AI writes (titles, recipes, dish ideas…) follows the app's
+// language setting, so the server is told which one on every request.
+function getUiLanguage(): string {
+  try {
+    return JSON.parse(localStorage.getItem('nouriva_preferences') || '{}').language || 'en';
+  } catch {
+    return 'en';
+  }
+}
+
 async function postJson(endpoint: string, body: Record<string, unknown>): Promise<any> {
   let res: Response;
   try {
     res = await fetch(endpoint, {
       method: 'POST',
       headers: await getAuthHeaders(),
-      body: JSON.stringify(body),
+      body: JSON.stringify({ ...body, language: getUiLanguage() }),
     });
   } catch {
     throw new AiAssistError('network', 'Could not reach the AI assist service.');
@@ -48,6 +58,9 @@ async function postJson(endpoint: string, body: Record<string, unknown>): Promis
     const payload = await res.json().catch(() => ({}));
     if (res.status === 503 && payload.code === 'NO_API_KEY') {
       throw new AiAssistError('no_api_key', payload.message || 'No AI provider is configured.');
+    }
+    if (payload.code === 'DIET_VIOLATION') {
+      throw new AiAssistError('diet', 'Could not find a suggestion that fits the vegetarian guidelines.');
     }
     if (res.status === 429) {
       throw new AiAssistError('rate_limited', 'The AI service is rate-limited right now — try again shortly.');

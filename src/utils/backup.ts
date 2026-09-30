@@ -1,8 +1,9 @@
 import type { Draft, MyPostRef, UserPreferences } from '../types';
+import { blobToDataUrl, getDraftPhoto, putDraftPhoto } from '../services/localDrafts';
 
 export interface NourivaBackup {
   app: 'nouriva';
-  schema: 1 | 2;
+  schema: 1 | 2 | 3;
   exportedAt: string;
   drafts: Draft[];
   preferences: Omit<UserPreferences, 'customAiProvider'>;
@@ -14,6 +15,13 @@ export interface NourivaBackup {
   myPostIds?: MyPostRef[];
   reactionsGiven?: string[];
   reportsGiven?: string[];
+  // Added in schema 3 — the full-size photos of unshared drafts live in
+  // IndexedDB (not localStorage), so without these a restore brought back
+  // the draft text but not its photo. Keyed by Draft.photoDraftId, as data
+  // URLs so the whole backup stays one self-contained JSON file. Also the
+  // anonymous device id used for share rate-limiting.
+  draftPhotos?: Record<string, string>;
+  deviceId?: string;
 }
 
 // Builds one canonical backup shape read directly from localStorage, used
@@ -21,22 +29,50 @@ export interface NourivaBackup {
 // so the two paths can't diverge. Deliberately excludes
 // nouriva_ai_provider_local (device-wrapped ciphertext) — it's not
 // portable across devices, same reasoning as living-in-harmony's backup.ts.
-export function buildBackup(): NourivaBackup {
+export async function buildBackup(): Promise<NourivaBackup> {
   const drafts: Draft[] = JSON.parse(localStorage.getItem('nouriva_drafts') || '[]');
   const preferences = JSON.parse(localStorage.getItem('nouriva_preferences') || '{}');
   const myPostIds: MyPostRef[] = JSON.parse(localStorage.getItem('nouriva_my_posts') || '[]');
   const reactionsGiven: string[] = JSON.parse(localStorage.getItem('nouriva_reactions_given') || '[]');
   const reportsGiven: string[] = JSON.parse(localStorage.getItem('nouriva_reports_given') || '[]');
+  const draftPhotos: Record<string, string> = {};
+  for (const d of drafts) {
+    if (!d.photoDraftId) continue;
+    try {
+      const blob = await getDraftPhoto(d.photoDraftId);
+      if (blob) draftPhotos[d.photoDraftId] = await blobToDataUrl(blob);
+    } catch {
+      // A photo that can't be read shouldn't sink the rest of the backup.
+    }
+  }
   return {
     app: 'nouriva',
-    schema: 2,
+    schema: 3,
     exportedAt: new Date().toISOString(),
     drafts,
     preferences,
     myPostIds,
     reactionsGiven,
     reportsGiven,
+    draftPhotos,
+    deviceId: localStorage.getItem('nouriva_device_id') || undefined,
   };
+}
+
+/** The parts of a backup that don't live in React state: draft photos go
+ * back into IndexedDB under their original ids, and the device id back into
+ * localStorage. Call before applying the backup's drafts. */
+export async function restoreBackupExtras(backup: NourivaBackup): Promise<void> {
+  for (const [id, dataUrl] of Object.entries(backup.draftPhotos || {})) {
+    try {
+      await putDraftPhoto(id, await (await fetch(dataUrl)).blob());
+    } catch {
+      // Skip a photo that can't be restored; the draft text still comes back.
+    }
+  }
+  if (backup.deviceId && !localStorage.getItem('nouriva_device_id')) {
+    localStorage.setItem('nouriva_device_id', backup.deviceId);
+  }
 }
 
 export function isValidBackup(data: unknown): data is NourivaBackup {
@@ -50,8 +86,8 @@ export function isValidBackup(data: unknown): data is NourivaBackup {
 // filename. The folder auto-save path (folderBackup.ts) uses a fixed name
 // instead, since it genuinely overwrites in place via the File System
 // Access API.
-export function downloadBackup(): void {
-  const backup = buildBackup();
+export async function downloadBackup(): Promise<void> {
+  const backup = await buildBackup();
   const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

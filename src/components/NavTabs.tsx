@@ -6,8 +6,8 @@ export default function NavTabs({ current, onChange }: { current: NavTab; onChan
   const TABS: { id: NavTab; label: string; icon: string }[] = [
     { id: 'browse', label: t.nav.browse, icon: '✧' },
     { id: 'create', label: t.nav.create, icon: '+' },
+    { id: 'stories', label: t.nav.stories, icon: '❦' },
     { id: 'my-nouriva', label: t.nav.myNouriva, icon: '☺' },
-    { id: 'settings', label: t.nav.settings, icon: '⚙' },
   ];
 
   return (

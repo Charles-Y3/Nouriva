@@ -6,9 +6,9 @@ import { useInstallPrompt } from '../hooks/useInstallPrompt';
 import type { Language } from '../types';
 
 const DEFAULT_BASE_URL = 'https://api.groq.com/openai/v1';
-const DEFAULT_MODEL = 'llama-3.3-70b-versatile';
+const DEFAULT_MODEL = 'qwen/qwen3.8-27b';
 import ConfirmButton from './ConfirmButton';
-import { downloadBackup, readBackupFile } from '../utils/backup';
+import { downloadBackup, readBackupFile, restoreBackupExtras } from '../utils/backup';
 import { markBackedUp } from '../utils/backupReminder';
 import {
   disableFolderBackup,
@@ -62,18 +62,22 @@ export default function SettingsView() {
   async function handleRestoreFromFolder() {
     try {
       const backup = await importFromFolder();
+      await restoreBackupExtras(backup);
       applyBackup(backup);
       setFolderEnabled(true);
       setFolderName(getFolderBackupName());
+      setFolderMessage('restored');
       markBackedUp();
-    } catch {
-      setFolderMessage('error');
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return;
+      setFolderMessage(err?.message === 'NO_BACKUP_FILE' ? 'no_backup' : 'error');
     }
   }
 
   async function handleImportFile(file: File) {
     try {
       const backup = await readBackupFile(file);
+      await restoreBackupExtras(backup);
       applyBackup(backup);
     } catch {
       // Silently ignored — an invalid file just doesn't apply.
@@ -182,6 +186,7 @@ export default function SettingsView() {
                 placeholder={DEFAULT_MODEL}
                 className="mt-1 w-full rounded-lg border border-linen-200 bg-linen-50 px-3 py-2 text-sm font-mono"
               />
+              <span className="mt-1 block text-[11px] text-ink-500">{t.settings.modelHint}</span>
             </label>
             <label className="block text-xs text-ink-500">
               {t.settings.apiKeyLabel}
@@ -255,7 +260,7 @@ export default function SettingsView() {
           <div className="flex flex-wrap gap-4">
             <button
               type="button"
-              onClick={() => { downloadBackup(); markBackedUp(); }}
+              onClick={async () => { await downloadBackup(); markBackedUp(); }}
               className="text-sm text-clay-700 hover:text-clay-600 underline"
             >
               {t.settings.exportDrafts}
@@ -305,6 +310,8 @@ export default function SettingsView() {
                 </button>
               </div>
               {folderMessage === 'error' && <p className="text-xs text-clay-700">{t.aiAssist.failed}</p>}
+              {folderMessage === 'no_backup' && <p className="text-xs text-clay-700">{t.settings.folderNoBackup}</p>}
+              {folderMessage === 'restored' && <p className="text-xs text-sage-600">{t.settings.folderRestored}</p>}
             </div>
           ) : (
             <p className="text-xs text-ink-500 pt-2 border-t border-linen-200">{t.settings.folderBackupUnsupported}</p>

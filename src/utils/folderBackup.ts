@@ -1,7 +1,8 @@
 import { buildBackup, downloadBackup, isValidBackup, type NourivaBackup } from './backup';
 
-// Auto-backs up drafts + preferences to a fixed-name file in a
-// user-granted folder on disk, via the File System Access API
+// Auto-backs up everything local (drafts + their photos, "Shared by you"
+// with its keys, preferences incl. the encrypted AI config, reactions) to a
+// fixed-name file in a user-granted folder on disk, via the File System Access API
 // (Chromium-only — Chrome/Edge on desktop, not Firefox/Safari/iOS).
 // Ported from living-in-harmony's src/utils/folderBackup.ts, trimmed down:
 // Nouriva has no backup-nudge/reminder cadence (the data at risk here is a
@@ -83,18 +84,30 @@ async function writeBackupToHandle(handle: FileSystemDirectoryHandle, backup: No
   await writable.close();
 }
 
-/** Called after every draft/preference change. Silent no-op if folder
- * backup isn't enabled or permission has been revoked since. */
+/** Writes the backup now. Silent no-op if folder backup isn't enabled or
+ * permission has been revoked since. */
 export async function autoSaveIfEnabled(): Promise<void> {
   if (!isFolderBackupEnabled()) return;
   const handle = await getHandleIfAlreadyGranted();
   if (!handle) return;
   try {
-    await writeBackupToHandle(handle, buildBackup());
+    await writeBackupToHandle(handle, await buildBackup());
   } catch {
-    // Best-effort — a failed background write shouldn't surface an error
-    // for something this low-stakes (a few drafts).
+    // Best-effort — a failed background write shouldn't surface an error.
   }
+}
+
+let autoSaveTimer: ReturnType<typeof setTimeout> | undefined;
+
+/** Debounced entry point for "something changed": collapses a burst of
+ * edits (every keystroke updates a draft) into one write of the whole
+ * backup, a second and a half after the last one. */
+export function scheduleAutoSave(): void {
+  if (!isFolderBackupEnabled()) return;
+  clearTimeout(autoSaveTimer);
+  autoSaveTimer = setTimeout(() => {
+    autoSaveIfEnabled();
+  }, 1500);
 }
 
 /** User-gesture-only: opens the folder picker, grants readwrite access,
@@ -103,7 +116,7 @@ export async function autoSaveIfEnabled(): Promise<void> {
  * treat that as "nothing happened," not a failure. */
 export async function enableFolderBackup(): Promise<string> {
   const handle = await (window as any).showDirectoryPicker({ mode: 'readwrite' });
-  await writeBackupToHandle(handle, buildBackup());
+  await writeBackupToHandle(handle, await buildBackup());
   await storeHandle(handle);
   localStorage.setItem(ENABLED_KEY, 'true');
   localStorage.setItem(FOLDER_NAME_KEY, handle.name);
