@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { Document, Page, View, Text, Image, Link, StyleSheet, Font, pdf } from '@react-pdf/renderer';
 import type { Language, NutritionEstimate } from '../types';
 import { BOOKLET_THEMES, type BookletTheme, type BookletThemeId } from './bookletThemes';
@@ -248,41 +249,109 @@ function buildStyles(th: BookletTheme, f: Fonts, k = 1) {
   });
 }
 
-// One recipe = one page. Rather than let a long recipe spill onto a second
-// page, estimate how tall its text will be, shrink the type a step at a time
-// (down to ~72%) until a photo of at least ~170pt still fits, and give the
-// photo whatever height is left. Estimates use average glyph advances, so
-// they err a little on the tall side.
+// One recipe = one page, whatever its length. For each recipe the layout is
+// chosen from estimated text heights (average glyph advances, deliberately a
+// little pessimistic):
+//   1. "sidebar": ingredients in a narrow column beside the method (the
+//      default look) — used while it leaves room for a good photo;
+//   2. "wide": ingredients in a full-width box with TWO columns, method full
+//      width below — much shorter for long ingredient lists;
+//   3. type shrinks a little (down to 85%) before the photo does, and the
+//      photo only shrinks to ~120pt;
+//   4. if it STILL can't fit, the method moves to its own second page
+//      (titled, clean) rather than spilling over mid-sentence.
 const PAGE_H = 842;
+const FOOTER_RESERVE = 56;
+const PHOTO_IDEAL = 200;
+const PHOTO_MIN = 105;
+
+type Layout = 'sidebar' | 'wide';
+interface RecipePlan { layout: Layout; k: number; heroH: number; twoPage: boolean; alt: boolean }
 
 function estLines(text: string, width: number, size: number, cjk: boolean): number {
-  const perLine = Math.max(1, Math.floor(width / (size * (cjk ? 1 : 0.5))));
+  const perLine = Math.max(1, Math.floor(width / (size * (cjk ? 1 : 0.55))));
   return text.split('\n').reduce((n, para) => n + Math.max(1, Math.ceil(para.length / perLine)), 0);
 }
 
-function fitRecipe(item: BookletItem, alt: boolean, cjk: boolean, nutritionLines: number): { k: number; heroH: number } {
+// CJK fonts (Noto) draw taller line boxes than Latin ones at the same lineHeight, measured ~1.3x.
+const LH = (cjk: boolean) => (cjk ? 1.3 : 1);
+const ingHeight = (l: string, width: number, k: number, cjk: boolean) => estLines(l, width, 10.5 * k, cjk) * 10.5 * k * 1.5 * LH(cjk) + 4;
+const stepHeight = (l: string, width: number, k: number, cjk: boolean) => estLines(l, width, 11 * k, cjk) * 11 * k * 1.55 * LH(cjk) + 8;
+
+// Split an ingredient list into two columns of near-equal height.
+function splitColumns(ingredients: string[], width: number, k: number, cjk: boolean): [string[], string[]] {
+  const heights = ingredients.map(l => ingHeight(l, width, k, cjk));
+  const total = heights.reduce((a, b) => a + b, 0);
+  let acc = 0;
+  let cut = ingredients.length;
+  for (let i = 0; i < heights.length; i++) {
+    if (acc + heights[i] / 2 >= total / 2) { cut = i; break; }
+    acc += heights[i];
+  }
+  cut = Math.min(Math.max(cut, 1), Math.max(1, ingredients.length - 1));
+  return [ingredients.slice(0, cut), ingredients.slice(cut)];
+}
+
+function headerHeight(item: BookletItem, k: number, cjk: boolean, withQuote: boolean): number {
+  const title = estLines(item.dishName || ' ', 487, 34 * k, cjk) * 34 * k * 1.2 * LH(cjk);
+  const tags = item.spiritTags.length > 0 ? 22 : 0;
+  const quote = withQuote && item.reflection ? estLines(item.reflection, 468, 15 * k, cjk) * 15 * k * 1.5 * LH(cjk) + 20 : 0;
+  return 14 + title + tags + quote;
+}
+
+function methodHeight(steps: string[], width: number, k: number, cjk: boolean): number {
+  return steps.length ? 26 + steps.reduce((h, l) => h + stepHeight(l, width, k, cjk), 0) : 0;
+}
+
+function wideIngredientsHeight(ingredients: string[], k: number, cjk: boolean): number {
+  if (!ingredients.length) return 0;
+  const [a, b] = splitColumns(ingredients, 222, k, cjk);
+  const col = (c: string[]) => c.reduce((h, l) => h + ingHeight(l, 222, k, cjk), 0);
+  return 28 + 18 + Math.max(col(a), col(b));
+}
+
+function planRecipe(item: BookletItem, altPreferred: boolean, cjk: boolean, nutritionLines: number): RecipePlan {
   const steps = item.recipe ? toSteps(item.recipe) : [];
   const ingredients = item.ingredients ? toIngredients(item.ingredients) : [];
-  const tags = item.spiritTags.length > 0;
-  let result = { k: 0.72, heroH: 90 };
-  for (const k of [1, 0.92, 0.85, 0.78, 0.72]) {
-    const title = estLines(item.dishName || ' ', 487, 34 * k, cjk) * 34 * k * 1.2;
-    const quote = item.reflection ? estLines(item.reflection, 468, 15 * k, cjk) * 15 * k * 1.5 + 20 : 0;
-    const side = ingredients.length
-      ? 40 + ingredients.reduce((h, l) => h + estLines(l, 147, 10.5 * k, cjk) * 10.5 * k * 1.5 + 4, 0)
-      : 0;
-    const main = steps.length
-      ? 26 + steps.reduce((h, l) => h + estLines(l, 268, 11 * k, cjk) * 11 * k * 1.55 + 8, 0)
-      : 0;
-    const columns = side || main ? 20 + Math.max(side, main) : 0;
-    const nutrition = nutritionLines ? 22 + nutritionLines * 9 * k * 1.4 : 0;
-    const text = 0.9 * (14 + title + (tags ? 22 : 0) + quote + columns + nutrition);
+  const nutritionH = (k: number) => (nutritionLines ? 22 + nutritionLines * 9 * k * 1.4 * LH(cjk) : 0);
+
+  // Photo height left for a layout at type scale k (title-above-photo
+  // arrangement costs ~42pt more than photo-on-top).
+  const heightFor = (k: number, layout: Layout, alt: boolean) => {
     const top = alt ? 46 + 18 : 22;
-    const heroH = Math.min(360, PAGE_H - 48 - top - text);
-    result = { k, heroH };
-    if (heroH >= 170) return result;
+    const head = headerHeight(item, k, cjk, true);
+    let body: number;
+    if (layout === 'sidebar') {
+      const side = ingredients.length ? 40 + ingredients.reduce((h, l) => h + ingHeight(l, 147, k, cjk), 0) : 0;
+      const main = methodHeight(steps, 268, k, cjk);
+      body = side || main ? 20 + Math.max(side, main) : 0;
+    } else {
+      const ing = wideIngredientsHeight(ingredients, k, cjk);
+      const main = methodHeight(steps, 463, k, cjk);
+      body = ing || main ? 20 + ing + (ing && main ? 14 : 0) + main : 0;
+    }
+    return Math.min(360, PAGE_H - FOOTER_RESERVE - top - (head + body + nutritionH(k)));
+  };
+
+  const ks = [1, 0.92, 0.85, 0.8];
+  const layouts: Layout[] = ['sidebar', 'wide'];
+  // Try the alternating arrangement first, then photo-on-top (more room).
+  for (const alt of altPreferred ? [true, false] : [false]) {
+    // Pass 1: a generous photo. Pass 2: a small one, rather than a second page.
+    for (const minHero of [PHOTO_IDEAL, PHOTO_MIN]) {
+      for (const k of ks) {
+        for (const layout of layouts) {
+          const heroH = heightFor(k, layout, alt);
+          if (heroH >= minHero) return { layout, k, heroH, twoPage: false, alt };
+        }
+      }
+    }
   }
-  return { k: result.k, heroH: Math.max(90, result.heroH) };
+  // Two pages: page 1 = photo, title, quote, ingredients (wide); page 2 = method.
+  const top = altPreferred ? 64 : 22;
+  const first = headerHeight(item, 1, cjk, true) + 20 + wideIngredientsHeight(ingredients, 1, cjk);
+  const heroH = Math.max(PHOTO_MIN, Math.min(300, PAGE_H - FOOTER_RESERVE - top - first));
+  return { layout: 'wide', k: 1, heroH, twoPage: steps.length > 0, alt: altPreferred };
 }
 
 function nutritionParts(n: NutritionEstimate | null | undefined, labels: BookletCopy['nutritionLabels']): string[] {
@@ -404,14 +473,14 @@ function BookletDocument({ items, options }: { items: BookletItem[]; options: Bo
         </Page>
       )}
 
-      {/* One feature per recipe — one page each, layout alternates for rhythm */}
+      {/* One feature per recipe — one page each (two only when it truly cannot fit), layout alternates for rhythm */}
       {items.map((item, idx) => {
-        const alt = idx % 2 === 1;
         const steps = item.recipe ? toSteps(item.recipe) : [];
         const ingredients = item.ingredients ? toIngredients(item.ingredients) : [];
         const tags = item.spiritTags.map(tag => item.spiritTagLabels[tag] || tag).join(' · ');
         const nutrition = nutritionParts(item.nutrition, copy.nutritionLabels).join('   ·   ');
-        const { k, heroH } = fitRecipe(item, alt, f.isCjk, nutrition ? 1 : 0);
+        const plan = planRecipe(item, idx % 2 === 1, f.isCjk, nutrition ? 1 : 0);
+        const { k, heroH, layout, twoPage, alt } = plan;
         const rs = buildStyles(th, f, k);
         const hero = item.photoSrc
           ? <Image src={item.photoSrc} style={[rs.heroImage, { height: heroH }]} />
@@ -431,10 +500,28 @@ function BookletDocument({ items, options }: { items: BookletItem[]; options: Bo
             {tags ? <Text style={rs.meta}>{tags}</Text> : null}
           </View>
         );
+        const methodBlock = (width: number) => (
+          <View>
+            <Text style={rs.sideHeading}>{copy.recipeHeading}</Text>
+            {steps.map((line, i) => (
+              <View key={i} style={rs.stepRow} wrap={false}>
+                <Text style={rs.stepNum}>{i + 1}</Text>
+                <Text style={rs.stepText}>{wrap(line, width, 11 * k)}</Text>
+              </View>
+            ))}
+          </View>
+        );
+        const nutritionBlock = nutrition ? (
+          <View style={rs.nutrition}>
+            <Text style={rs.nutritionLabel}>{copy.nutritionHeading}</Text>
+            <Text style={rs.nutritionLine}>{nutrition}</Text>
+          </View>
+        ) : null;
+        const wideCols = layout === 'wide' && ingredients.length > 0 ? splitColumns(ingredients, 222, k, f.isCjk) : null;
         const body = (
           <View>
             {item.reflection ? <Text style={rs.pullQuote}>{wrap(item.reflection, 468, 15 * k)}</Text> : null}
-            {(ingredients.length > 0 || steps.length > 0) && (
+            {layout === 'sidebar' && (ingredients.length > 0 || steps.length > 0) && (
               <View style={rs.columns}>
                 {ingredients.length > 0 && (
                   <View style={rs.sidebar}>
@@ -444,50 +531,72 @@ function BookletDocument({ items, options }: { items: BookletItem[]; options: Bo
                     ))}
                   </View>
                 )}
-                {steps.length > 0 && (
-                  <View style={rs.main}>
-                    <Text style={rs.sideHeading}>{copy.recipeHeading}</Text>
-                    {steps.map((line, i) => (
-                      <View key={i} style={rs.stepRow} wrap={false}>
-                        <Text style={rs.stepNum}>{i + 1}</Text>
-                        <Text style={rs.stepText}>{wrap(line, 268, 11 * k)}</Text>
-                      </View>
-                    ))}
-                  </View>
-                )}
+                {steps.length > 0 && <View style={rs.main}>{methodBlock(268)}</View>}
               </View>
             )}
-            {nutrition ? (
-              <View style={rs.nutrition}>
-                <Text style={rs.nutritionLabel}>{copy.nutritionHeading}</Text>
-                <Text style={rs.nutritionLine}>{nutrition}</Text>
+            {layout === 'wide' && (
+              <View style={{ marginTop: 20 }}>
+                {wideCols && (
+                  <View style={[rs.sidebar, { width: '100%', marginRight: 0 }]}>
+                    <Text style={rs.sideHeading}>{copy.ingredientsHeading}</Text>
+                    <View style={{ flexDirection: 'row' }}>
+                      {wideCols.map((col, ci) => (
+                        <View key={ci} style={{ width: '50%', paddingRight: ci === 0 ? 7 : 0, paddingLeft: ci === 1 ? 7 : 0 }}>
+                          {col.map((line, i) => (
+                            <Text key={i} style={rs.ingredient}>{wrap(line, 222, 10.5 * k)}</Text>
+                          ))}
+                        </View>
+                      ))}
+                    </View>
+                  </View>
+                )}
+                {!twoPage && steps.length > 0 && <View style={{ marginTop: wideCols ? 14 : 0 }}>{methodBlock(463)}</View>}
               </View>
-            ) : null}
+            )}
+            {!twoPage && nutritionBlock}
+          </View>
+        );
+
+        const footer = (
+          <View style={s.pageFooter} fixed>
+            <Text>{options.title}</Text>
+            <Text render={({ pageNumber }) => String(pageNumber)} />
           </View>
         );
 
         return (
-          <Page key={item.id} size="A4" style={s.page}>
-            {!alt ? (
-              <View>
-                {hero}
-                <View style={{ paddingHorizontal: 54, paddingTop: 22 }}>
-                  {titleBlock}
-                  {body}
+          <Fragment key={item.id}>
+            <Page size="A4" style={s.page}>
+              {!alt ? (
+                <View>
+                  {hero}
+                  <View style={{ paddingHorizontal: 54, paddingTop: 22 }}>
+                    {titleBlock}
+                    {body}
+                  </View>
                 </View>
-              </View>
-            ) : (
-              <View>
-                <View style={{ paddingHorizontal: 54, paddingTop: 46 }}>{titleBlock}</View>
-                <View style={{ marginTop: 18, marginHorizontal: 54 }}>{hero}</View>
-                <View style={{ paddingHorizontal: 54 }}>{body}</View>
-              </View>
+              ) : (
+                <View>
+                  <View style={{ paddingHorizontal: 54, paddingTop: 46 }}>{titleBlock}</View>
+                  <View style={{ marginTop: 18, marginHorizontal: 54 }}>{hero}</View>
+                  <View style={{ paddingHorizontal: 54 }}>{body}</View>
+                </View>
+              )}
+              {footer}
+            </Page>
+            {twoPage && (
+              <Page size="A4" style={s.page}>
+                <View style={s.inner}>
+                  <Text style={s.label}>{[pad(idx + 1), item.categoryLabel].filter(Boolean).join('  ·  ')}</Text>
+                  <Text style={[s.heading, { fontSize: 26, marginBottom: 14 }]}>{wrap(item.dishName || ' ', 487, 26)}</Text>
+                  <View style={s.rule} />
+                  <View style={{ marginTop: 14 }}>{methodBlock(463)}</View>
+                  {nutritionBlock}
+                </View>
+                {footer}
+              </Page>
             )}
-            <View style={s.pageFooter} fixed>
-              <Text>{options.title}</Text>
-              <Text render={({ pageNumber }) => String(pageNumber)} />
-            </View>
-          </Page>
+          </Fragment>
         );
       })}
 
