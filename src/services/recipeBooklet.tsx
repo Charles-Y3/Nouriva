@@ -1,6 +1,7 @@
 import { Fragment } from 'react';
 import { Document, Page, View, Text, Image, Link, StyleSheet, Font, pdf } from '@react-pdf/renderer';
 import type { Language, NutritionEstimate } from '../types';
+import { ingredientLines } from '../utils/ingredients';
 import { BOOKLET_THEMES, type BookletTheme, type BookletThemeId } from './bookletThemes';
 
 // Magazine-style recipe booklet: a cover with a masthead and hero photo, a
@@ -170,9 +171,7 @@ function toSteps(text: string): string[] {
   return sentences.length > 1 ? sentences : lines;
 }
 
-function toIngredients(text: string): string[] {
-  return text.split(/\r?\n|;|；/).map(l => l.replace(/^\s*[-•*]\s*/, '').trim()).filter(Boolean);
-}
+const toIngredients = ingredientLines;
 
 function issueLine(language: Language): string {
   const locale = language === 'zh-Hant' ? 'zh-TW' : language === 'zh-Hans' ? 'zh-CN' : 'en-GB';

@@ -279,7 +279,7 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
           </label>
           <div>
             <p className="text-xs text-ink-500 mb-1.5">{t.booklet.themeLabel}</p>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-3 gap-2">
               {(Object.keys(BOOKLET_THEMES) as BookletThemeId[]).map(id => {
                 const label = t.booklet['theme' + id.charAt(0).toUpperCase() + id.slice(1)];
                 const active = theme === id;
@@ -289,7 +289,7 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
                     type="button"
                     onClick={() => setTheme(id)}
                     aria-pressed={active}
-                    className={`flex items-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                    className={`flex items-center justify-center gap-2 rounded-full border px-3 py-1.5 text-sm transition-colors ${
                       active ? 'border-clay-600 text-ink-900' : 'border-linen-200 text-ink-700 hover:border-sage-400'
                     }`}
                   >
@@ -302,14 +302,14 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
           </div>
           <div>
             <p className="text-xs text-ink-500 mb-1.5">{t.booklet.coverStyleLabel}</p>
-            <div className="flex flex-wrap gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {(['featured', 'single'] as const).map(id => (
                 <button
                   key={id}
                   type="button"
                   onClick={() => setCoverStyle(id)}
                   aria-pressed={coverStyle === id}
-                  className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                  className={`rounded-full border px-3 py-1.5 text-sm text-center transition-colors ${
                     coverStyle === id ? 'border-clay-600 text-ink-900' : 'border-linen-200 text-ink-700 hover:border-sage-400'
                   }`}
                 >

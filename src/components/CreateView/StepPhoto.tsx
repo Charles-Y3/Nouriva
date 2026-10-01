@@ -1,3 +1,4 @@
+import { ingredientLines } from '../../utils/ingredients';
 import { useRef, useState } from 'react';
 import type { Draft } from '../../types';
 import { useT } from '../../hooks/useT';
@@ -68,7 +69,7 @@ export default function StepPhoto({
       // that has to stay the author's own words, never AI-written.
       update({
         dishName: result.dishName || draft.dishName,
-        ingredients: result.ingredients || draft.ingredients,
+        ingredients: result.ingredients ? ingredientLines(result.ingredients).join('\n') : draft.ingredients,
         recipe: result.recipe || draft.recipe,
         nutrition: result.nutrition,
       });

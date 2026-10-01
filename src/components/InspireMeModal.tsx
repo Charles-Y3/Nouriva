@@ -1,3 +1,4 @@
+import { ingredientLines } from '../utils/ingredients';
 import { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useT } from '../hooks/useT';
@@ -87,7 +88,7 @@ export default function InspireMeModal({
       id: 'draft_' + now,
       dishName: suggestion.dishName,
       reflection: '',
-      ingredients: suggestion.ingredients,
+      ingredients: ingredientLines(suggestion.ingredients || '').join('\n'),
       recipe: suggestion.recipe,
       spiritTags: [selectedTag],
       createdAt: now,
@@ -175,7 +176,7 @@ export default function InspireMeModal({
                 <div className="mt-3 space-y-2 text-sm text-ink-700">
                   <div>
                     <p className="font-medium text-ink-900">{t.inspireMe.ingredientsHeading}</p>
-                    <p className="whitespace-pre-line text-ink-500">{suggestion.ingredients}</p>
+                    <p className="whitespace-pre-line text-ink-500">{ingredientLines(suggestion.ingredients || '').join('\n')}</p>
                   </div>
                   <div>
                     <p className="font-medium text-ink-900">{t.inspireMe.recipeHeading}</p>

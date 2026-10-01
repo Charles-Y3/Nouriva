@@ -1,3 +1,4 @@
+import { ingredientLines } from '../utils/ingredients';
 import { useEffect, useState } from 'react';
 import { fetchPostById } from '../services/postsApi';
 import { useT } from '../hooks/useT';
@@ -63,7 +64,9 @@ export default function PostDetail({ postId, onBack }: { postId: string; onBack:
                 {post.ingredients && (
                   <div>
                     <h2 className="font-semibold text-ink-900 mb-1">{t.postDetail.ingredientsHeading}</h2>
-                    <p className="whitespace-pre-line">{post.ingredients}</p>
+                    <ul>
+                      {ingredientLines(post.ingredients).map((line, i) => <li key={i}>{line}</li>)}
+                    </ul>
                   </div>
                 )}
                 {post.recipe && (
