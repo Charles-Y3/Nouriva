@@ -528,7 +528,7 @@ export function createApiApp() {
     if (typeof dishName !== 'string' || !dishName.trim() || typeof reflection !== 'string' || !reflection.trim()) {
       return res.status(400).json({ error: "dishName and reflection are required" });
     }
-    if (category != null && !CATEGORY_VOCAB.includes(category)) return res.status(400).json({ error: "Unknown category" });
+    if (!CATEGORY_VOCAB.includes(category)) return res.status(400).json({ error: "A category is required", code: "CATEGORY_REQUIRED" });
     const tags = Array.isArray(spiritTags) ? spiritTags.filter((t: unknown) => SPIRIT_TAG_VOCAB.includes(t as string)) : [];
     const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null);
     if (BLOCKED_PATTERN.test([dishName, description, reflection, ingredients, recipe].filter(Boolean).join(' '))) {
@@ -611,7 +611,31 @@ export function createApiApp() {
   app.post("/api/admin/posts/:id/approve", requireAdmin, async (req, res) => {
     const supabase = getSupabaseAdmin();
     if (!supabase) return res.status(503).json({ error: "Admin moderation is not configured on this server." });
-    const { error } = await supabase.from('posts').update({ status: 'visible', moderation_note: null }).eq('id', req.params.id).eq('status', 'pending');
+    const { error } = await supabase.from('posts').update({ status: 'visible', moderation_note: null, report_count: 0, moderated_at: new Date().toISOString() }).eq('id', req.params.id).eq('status', 'pending');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ status: "ok" });
+  });
+
+  // Recent approve/deny decisions (newest first) so a wrong one can be undone.
+  app.get("/api/admin/recent-decisions", requireAdmin, async (req, res) => {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return res.status(503).json({ error: "Admin moderation is not configured on this server." });
+    const { data, error } = await supabase
+      .from('posts')
+      .select('id, dish_name, reflection, photo_url, status, moderated_at')
+      .not('moderated_at', 'is', null)
+      .in('status', ['visible', 'hidden'])
+      .order('moderated_at', { ascending: false })
+      .limit(15);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ posts: data });
+  });
+
+  // Undo: put a decided post back in the queue (hidden from Browse until decided again).
+  app.post("/api/admin/posts/:id/requeue", requireAdmin, async (req, res) => {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return res.status(503).json({ error: "Admin moderation is not configured on this server." });
+    const { error } = await supabase.from('posts').update({ status: 'pending', moderated_at: null }).eq('id', req.params.id).in('status', ['visible', 'hidden']);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ status: "ok" });
   });
@@ -619,7 +643,7 @@ export function createApiApp() {
   app.post("/api/admin/posts/:id/hide",requireAdmin, async (req, res) => {
     const supabase = getSupabaseAdmin();
     if (!supabase) return res.status(503).json({ error: "Admin moderation is not configured on this server." });
-    const { error } = await supabase.from('posts').update({ status: 'hidden' }).eq('id', req.params.id);
+    const { error } = await supabase.from('posts').update({ status: 'hidden', moderated_at: new Date().toISOString() }).eq('id', req.params.id);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ status: "ok" });
   });

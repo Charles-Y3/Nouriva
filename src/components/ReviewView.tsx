@@ -20,6 +20,13 @@ interface PendingPost {
   created_at: string;
 }
 
+interface DecidedPost {
+  id: string;
+  dish_name: string;
+  status: 'visible' | 'hidden';
+  moderated_at: string;
+}
+
 const OWN_PHOTO = /^https:\/\/[a-z0-9-]+\.public\.blob\.vercel-storage\.com\//i;
 const SECRET_KEY = 'nouriva_admin_secret';
 
@@ -37,6 +44,7 @@ export default function ReviewView() {
   const [posts, setPosts] = useState<PendingPost[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  const [recent, setRecent] = useState<DecidedPost[]>([]);
 
   const load = useCallback(async (s: string) => {
     setError(null);
@@ -50,6 +58,8 @@ export default function ReviewView() {
       }
       if (!res.ok) throw new Error(String(res.status));
       setPosts((await res.json()).posts as PendingPost[]);
+      const hist = await fetch('/api/admin/recent-decisions', { headers: { 'x-admin-secret': s } });
+      if (hist.ok) setRecent((await hist.json()).posts as DecidedPost[]);
     } catch {
       setError('Could not load the queue.');
     }
@@ -58,6 +68,12 @@ export default function ReviewView() {
   useEffect(() => {
     if (secret) load(secret);
   }, [secret, load]);
+
+  // The tab title carries the count, so a pinned tab shows what is waiting.
+  useEffect(() => {
+    document.title = posts && posts.length > 0 ? `Review (${posts.length}) – Nouriva` : 'Review – Nouriva';
+    return () => { document.title = 'Nouriva'; };
+  }, [posts]);
 
   function signIn() {
     const s = input.trim();
@@ -74,6 +90,21 @@ export default function ReviewView() {
       const res = await fetch(`/api/admin/posts/${post.id}/${action}`, { method: 'POST', headers: { 'x-admin-secret': secret } });
       if (!res.ok) throw new Error(String(res.status));
       setPosts(prev => (prev ? prev.filter(p => p.id !== post.id) : prev));
+      load(secret);
+    } catch {
+      setError('That did not work — try again.');
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  async function undo(post: DecidedPost) {
+    setBusy(post.id);
+    setError(null);
+    try {
+      const res = await fetch(`/api/admin/posts/${post.id}/requeue`, { method: 'POST', headers: { 'x-admin-secret': secret } });
+      if (!res.ok) throw new Error(String(res.status));
+      await load(secret);
     } catch {
       setError('That did not work — try again.');
     } finally {
@@ -133,6 +164,27 @@ export default function ReviewView() {
               </li>
             ))}
           </ul>
+        )}
+
+        {secret && recent.length > 0 && (
+          <section className="mt-10">
+            <h2 className="text-sm font-semibold text-ink-500 uppercase tracking-wide mb-2">Recent decisions</h2>
+            <ul className="space-y-2">
+              {recent.map(r => (
+                <li key={r.id} className="flex items-center justify-between gap-3 bg-linen-100 border border-linen-200 rounded-xl px-4 py-2.5 text-sm">
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{r.dish_name}</span>
+                    <span className="text-xs text-ink-500">
+                      {r.status === 'visible' ? 'Approved' : 'Denied'} · {new Date(r.moderated_at).toLocaleString()}
+                    </span>
+                  </span>
+                  <button type="button" disabled={busy === r.id} onClick={() => undo(r)} className="shrink-0 text-clay-700 underline disabled:opacity-50">
+                    Undo
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
         )}
 
         {error && <p className="mt-4 text-sm text-clay-700">{error}</p>}

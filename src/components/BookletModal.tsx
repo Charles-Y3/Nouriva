@@ -48,7 +48,7 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
   const [dedication, setDedication] = useState('');
   const [theme, setTheme] = useState<BookletThemeId>('forest');
   const [includeStory, setIncludeStory] = useState(false);
-  const [coverStyle, setCoverStyle] = useState<'magazine' | 'tiles'>('magazine');
+  const [coverStyle, setCoverStyle] = useState<'single' | 'featured'>('featured');
   const [featuredId, setFeaturedId] = useState('');
 
   const likedPostIds = useMemo(() => {
@@ -303,7 +303,7 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
           <div>
             <p className="text-xs text-ink-500 mb-1.5">{t.booklet.coverStyleLabel}</p>
             <div className="flex flex-wrap gap-2">
-              {(['magazine', 'tiles'] as const).map(id => (
+              {(['featured', 'single'] as const).map(id => (
                 <button
                   key={id}
                   type="button"
@@ -313,7 +313,7 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
                     coverStyle === id ? 'border-clay-600 text-ink-900' : 'border-linen-200 text-ink-700 hover:border-sage-400'
                   }`}
                 >
-                  {id === 'magazine' ? t.booklet.coverMagazine : t.booklet.coverTiles}
+                  {id === 'featured' ? t.booklet.coverFeatured : t.booklet.coverSingle}
                 </button>
               ))}
             </div>

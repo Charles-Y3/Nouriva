@@ -275,6 +275,8 @@ export default function MyNourivaView({
                     {open && (
                       <div className="px-4 pb-4 space-y-3">
                         {state === 'live' && <PostCard post={p} onOpen={onOpenPost} />}
+                        {state === 'removed' && <p className="text-sm text-ink-500">{t.myNouriva.removedReason}</p>}
+                        {state === 'pending' && <p className="text-sm text-ink-500">{t.myNouriva.pendingNote}</p>}
 
                         {state !== 'removed' && key && controlsAvailable && (
                           <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm">

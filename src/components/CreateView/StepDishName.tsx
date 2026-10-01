@@ -31,7 +31,7 @@ export default function StepDishName({
       />
 
       <label className="mt-4 block text-sm text-ink-500">
-        {t.create.dishName.categoryLabel}
+        {t.create.dishName.categoryLabel} *
         <select
           value={draft.category ?? ''}
           onChange={e => update({ category: e.target.value || undefined })}
@@ -73,13 +73,17 @@ export default function StepDishName({
         </button>
       )}
 
+      {draft.dishName.trim() && !draft.category && (
+        <p className="mt-2 text-xs text-clay-700">{t.create.dishName.categoryRequired}</p>
+      )}
+
       <div className="mt-6 flex justify-between">
         <button type="button" onClick={onBack} className="text-sm text-ink-500 hover:text-ink-900 px-2 py-2.5">
           {t.common.back}
         </button>
         <button
           type="button"
-          disabled={!draft.dishName.trim()}
+          disabled={!draft.dishName.trim() || !draft.category}
           onClick={onNext}
           className="bg-clay-600 hover:bg-clay-700 disabled:opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
         >

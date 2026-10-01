@@ -373,3 +373,51 @@ create policy posts_insert_anon on posts for insert to anon
     and moderation_note is null
     and screened_at is null
   );
+
+
+-- 7. Mandatory category, review history, auto-review of reported posts --
+--
+-- Safe to re-run.
+--  * Category is required for NEW posts (enforced in the insert policy only, so
+--    older uncategorised posts keep working: reactions/approvals on them are
+--    plain UPDATEs that a table CHECK would have rejected). Edits are checked
+--    by /api/posts/:id/edit.
+--  * moderated_at records when the admin last approved/denied a post, so
+--    /review can show recent decisions with an Undo.
+--  * A post reported 3 times goes back to 'pending' (hidden from Browse until
+--    the admin looks at it); approving it resets its report count.
+
+alter table posts add column if not exists moderated_at timestamptz;
+
+drop policy if exists posts_insert_anon on posts;
+create policy posts_insert_anon on posts for insert to anon
+  with check (
+    reaction_felt_count = 0
+    and reaction_inspired_count = 0
+    and reaction_thanks_count = 0
+    and report_count = 0
+    and status = 'pending'
+    and author_hidden = false
+    and owner_key_hash is not null
+    and char_length(owner_key_hash) = 64
+    and reshare_count = 0
+    and moderation_note is null
+    and screened_at is null
+    and moderated_at is null
+    and category in ('Main', 'Soup', 'Salad', 'Breakfast', 'Snack', 'Dessert', 'Bakery', 'Drink')
+  );
+
+create or replace function report_post(post_id uuid)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update posts set
+    report_count = report_count + 1,
+    status = case when report_count + 1 >= 3 then 'pending' else status end,
+    moderation_note = case when report_count + 1 >= 3 then 'Reported ' || (report_count + 1) || ' times' else moderation_note end
+  where id = post_id and status = 'visible' and author_hidden = false;
+end;
+$$;

@@ -121,6 +121,7 @@ export default function StepShare({
       {!isEdit && <p className="mt-4 text-xs text-ink-500">{t.create.share.irreversibleNote}</p>}
 
       {!configured && <p className="mt-2 text-sm text-clay-700">{t.create.share.notConfigured}</p>}
+      {!draft.category && <p className="mt-2 text-sm text-clay-700">{t.create.dishName.categoryRequired}</p>}
       {blocked && <p className="mt-2 text-sm text-clay-700">{t.create.share.blockedContent}</p>}
       {error && <p className="mt-4 text-sm text-clay-700">{error}</p>}
 
@@ -151,7 +152,7 @@ export default function StepShare({
               label={isEdit ? t.create.share.updateButton : t.create.share.shareButton}
               prompt={isEdit ? t.create.share.updateConfirmPrompt : t.create.share.shareConfirmPrompt}
               onConfirm={share}
-              disabled={!configured || blocked}
+              disabled={!configured || blocked || !draft.category}
               className="bg-clay-600 hover:bg-clay-700 disabled:opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
             />
           )}
