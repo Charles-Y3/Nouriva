@@ -74,14 +74,22 @@ export class ShareError extends Error {
   }
 }
 
-// Creates the post plus its author key. Returns the post and the plaintext
-// key — the caller must keep the key (see AppContext.markPublished): the
-// server only ever sees its hash, so a lost key means no hide/edit later.
-export async function createPost(post: NewPost): Promise<{ post: Post; key: string }> {
+// Creates the post plus its author key. A new post is inserted as 'pending'
+// (the only status the database lets the browser write), then the server's
+// screening route decides whether it goes live now or waits for the admin.
+// Returns the post id, the plaintext key — the caller must keep the key (see
+// AppContext.markPublished): the server only ever sees its hash, so a lost key
+// means no hide/edit later — and whether the post is live or waiting.
+export async function createPost(post: NewPost): Promise<{ id: string; key: string; state: 'live' | 'pending' }> {
   const key = generateShareKey();
-  const { data, error } = await supabase
+  // The id is chosen here because a pending row can't be read back (the
+  // public SELECT policy only shows visible posts).
+  const id = crypto.randomUUID();
+  const { error } = await supabase
     .from('posts')
     .insert({
+      id,
+      status: 'pending',
       dish_name: post.dishName,
       description: post.description || null,
       photo_url: post.photoUrl || null,
@@ -93,9 +101,7 @@ export async function createPost(post: NewPost): Promise<{ post: Post; key: stri
       nutrition: post.nutrition || null,
       owner_key_hash: await hashShareKey(key),
       device_id: getDeviceId(),
-    })
-    .select(POST_COLUMNS)
-    .single();
+    });
   if (error) {
     const msg = error.message || '';
     if (msg.includes('nouriva_rate_limit')) throw new ShareError('rate_limit', msg);
@@ -103,7 +109,21 @@ export async function createPost(post: NewPost): Promise<{ post: Post; key: stri
     if (msg.includes('posts_no_blocked_content')) throw new ShareError('blocked', msg);
     throw new ShareError('unknown', msg);
   }
-  return { post: data as Post, key };
+  // If the screening request itself fails the post simply stays pending — the
+  // admin queue lists it — so the author is told it is waiting, not that it failed.
+  let state: 'live' | 'pending' = 'pending';
+  try {
+    const res = await fetch(`/api/posts/${id}/screen`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ key }),
+    });
+    const payload = await res.json().catch(() => ({}));
+    if (res.ok && payload.state === 'live') state = 'live';
+  } catch {
+    // stays pending
+  }
+  return { id, key, state };
 }
 
 export async function reactToPost(postId: string, reaction: ReactionType): Promise<void> {

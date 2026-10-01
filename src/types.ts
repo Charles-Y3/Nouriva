@@ -50,7 +50,7 @@ export interface Post {
   report_count: number;
   // `status` is the moderator's switch (hidden = removed by a moderator,
   // sticky); `author_hidden` is the author's own hide/show switch.
-  status: 'visible' | 'hidden';
+  status: 'visible' | 'hidden' | 'pending';
   author_hidden: boolean;
 }
 

@@ -127,6 +127,24 @@ curl -X POST -H "x-admin-secret: $ADMIN_SECRET" https://your-deployment.vercel.a
 curl -X DELETE -H "x-admin-secret: $ADMIN_SECRET" https://your-deployment.vercel.app/api/admin/posts/<id>
 ```
 
+### AI screening and the review queue
+
+Every new dish (and every edit) is checked before it appears in Browse:
+
+1. The browser saves the dish as `pending` — the only status the database lets it write.
+2. `POST /api/posts/:id/screen` (author's share key required, runs once per post) sends the text and
+   photo to the screening model (`MODERATION_API_KEY`, default model `qwen/qwen3.8-27b`).
+3. Only a well-formed `clean` verdict makes the dish `visible`. A flag, a rate limit, a timeout, an
+   unreadable reply, a missing key or a photo not hosted on Nouriva storage leaves it `pending`.
+4. Pending dishes appear on **`/review`** (enter `ADMIN_SECRET`) where you Approve (-> visible) or
+   Deny (-> hidden). If `RESEND_API_KEY` and `ADMIN_EMAIL` are set, you also get an email.
+5. The author sees "Waiting for review" (the same message whether flagged or not screened) and is
+   never shown the AI's reason.
+
+Run the `db/schema.sql` section 6 once in Supabase before deploying this. The model only proposes;
+the word-block filter, the database constraint and the Report button remain as backstops, and a
+cleverly worded post can still fool an AI check.
+
 ## Language
 
 English, Traditional Chinese (繁體中文), and Simplified Chinese (简体中文) — chosen at first
@@ -198,7 +216,7 @@ reacted to, and saved dishes, and generates a magazine-style PDF: a cover (masth
 hero photo), a contents page, an optional editor's note (this week's story), one recipe feature per
 page (hero photo, pull-quote, ingredients sidebar, numbered method — layouts alternate), and a back
 cover with a dedication. Each recipe fits on one page (the type shrinks and the photo gives up height as needed) and shows its
-nutrition estimate when it has one. The Nouriva mark and a link to the app (https://nourivaveg.vercel.app) are on the cover and back
+nutrition estimate when it has one. The Nouriva mark and a link to the app (https://nouriva.qolife.app) are on the cover and back
 cover. Choose a title, dedication and one of four colour themes. Generated
 entirely client-side — `@react-pdf/renderer` is lazy-loaded only when you generate one. Chinese
 gets Noto Serif/Sans SC/TC (fetched from a CDN on demand, plus the small punctuation subsets those

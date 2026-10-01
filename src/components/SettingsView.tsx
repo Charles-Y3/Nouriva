@@ -330,7 +330,13 @@ export default function SettingsView() {
 
       <section>
         <h2 className="text-sm font-semibold text-ink-500 uppercase tracking-wide mb-2">{t.settings.aboutHeading}</h2>
-        <p className="text-sm text-ink-500 leading-relaxed">{t.settings.aboutBody}</p>
+        <div className="space-y-3 text-sm text-ink-500 leading-relaxed">
+          {t.settings.aboutBody.split('\n\n').map((para: string, i: number) => (
+            <p key={i}>
+              {para.split('**').map((part, j) => (j % 2 ? <strong key={j} className="font-semibold text-ink-700">{part}</strong> : part))}
+            </p>
+          ))}
+        </div>
       </section>
     </div>
   );

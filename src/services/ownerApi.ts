@@ -49,6 +49,7 @@ export interface EditedPost {
   nutrition?: NutritionEstimate;
 }
 
-export async function editPost(id: string, key: string, post: EditedPost): Promise<void> {
-  await ownerFetch(`/api/posts/${id}/edit`, { key, ...post });
+export async function editPost(id: string, key: string, post: EditedPost): Promise<'live' | 'pending'> {
+  const payload = await ownerFetch(`/api/posts/${id}/edit`, { key, ...post });
+  return payload.state === 'pending' ? 'pending' : 'live';
 }

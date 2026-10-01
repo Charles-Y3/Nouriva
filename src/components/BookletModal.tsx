@@ -10,7 +10,17 @@ import type { Draft, Post } from '../types';
 
 // Printed (and linked) on the booklet's back cover — the deployed app, not
 // whatever origin the booklet happens to be generated from (e.g. localhost).
-const APP_URL = 'https://nourivaveg.vercel.app';
+const APP_URL = 'https://nouriva.qolife.app';
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('booklet timeout')), ms);
+    promise.then(
+      v => { clearTimeout(timer); resolve(v); },
+      e => { clearTimeout(timer); reject(e); },
+    );
+  });
+}
 
 type PoolKey = 'shared' | 'liked' | 'drafts';
 
@@ -38,6 +48,8 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
   const [dedication, setDedication] = useState('');
   const [theme, setTheme] = useState<BookletThemeId>('forest');
   const [includeStory, setIncludeStory] = useState(false);
+  const [coverStyle, setCoverStyle] = useState<'magazine' | 'tiles'>('magazine');
+  const [featuredId, setFeaturedId] = useState('');
 
   const likedPostIds = useMemo(() => {
     const ids = new Set<string>();
@@ -61,6 +73,16 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Dishes currently ticked, for the "featured on the cover" picker.
+  const selectedDishes = useMemo(() => {
+    const out: { id: string; name: string }[] = [];
+    const add = (id: string, name: string) => { if (!out.some(o => o.id === id)) out.push({ id, name }); };
+    sharedPosts.forEach(p => selected.has(itemKey('shared', p.id)) && add(p.id, p.dish_name));
+    likedPosts.forEach(p => selected.has(itemKey('liked', p.id)) && add(p.id, p.dish_name));
+    drafts.forEach((d: Draft) => selected.has(itemKey('drafts', d.id)) && add(d.id, d.dishName || t.booklet.untitledDraft));
+    return out;
+  }, [sharedPosts, likedPosts, drafts, selected, t]);
 
   function toggle(key: string) {
     setSelected(prev => {
@@ -124,12 +146,17 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
 
       const { generateBookletPdf } = await import('../services/recipeBooklet');
       const story = includeStory ? storyText(STORIES[currentStoryWeek() - 1], preferences.language) : undefined;
-      const blob = await generateBookletPdf(items, {
+      // Chinese booklets download ~4 MB of fonts first. If that stalls (blocked
+      // CDN, bad connection) give up with a clear error instead of hanging.
+      const blob = await withTimeout(generateBookletPdf(items, {
         title: title.trim() || t.booklet.defaultTitle,
         dedication: dedication.trim() || undefined,
         theme,
         editorNote: story,
         language: preferences.language,
+        coverStyle,
+        featuredId: selectedDishes.some(d => d.id === featuredId) ? featuredId : undefined,
+        alsoInside: t.booklet.alsoInside,
         copy: {
           ingredientsHeading: t.postDetail.ingredientsHeading,
           recipeHeading: t.postDetail.recipeHeading,
@@ -150,7 +177,7 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
         },
         logoSrc: `${window.location.origin}/icon-192.png`,
         appUrl: APP_URL,
-      });
+      }), preferences.language === 'en' ? 90_000 : 150_000);
 
       const url = URL.createObjectURL(blob);
       setPdfUrl(url);
@@ -273,11 +300,44 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
               })}
             </div>
           </div>
+          <div>
+            <p className="text-xs text-ink-500 mb-1.5">{t.booklet.coverStyleLabel}</p>
+            <div className="flex flex-wrap gap-2">
+              {(['magazine', 'tiles'] as const).map(id => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setCoverStyle(id)}
+                  aria-pressed={coverStyle === id}
+                  className={`rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                    coverStyle === id ? 'border-clay-600 text-ink-900' : 'border-linen-200 text-ink-700 hover:border-sage-400'
+                  }`}
+                >
+                  {id === 'magazine' ? t.booklet.coverMagazine : t.booklet.coverTiles}
+                </button>
+              ))}
+            </div>
+          </div>
+          {selectedDishes.length > 1 && (
+            <label className="block text-xs text-ink-500">
+              {t.booklet.featuredLabel}
+              <select
+                value={selectedDishes.some(d => d.id === featuredId) ? featuredId : ''}
+                onChange={e => setFeaturedId(e.target.value)}
+                className="mt-1 w-full rounded-lg border border-linen-200 bg-linen-100 px-3 py-2 text-sm text-ink-900"
+              >
+                <option value="">{t.booklet.featuredAuto}</option>
+                {selectedDishes.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+              </select>
+            </label>
+          )}
           <label className="flex items-center gap-2.5 text-sm text-ink-700 cursor-pointer">
             <input type="checkbox" checked={includeStory} onChange={e => setIncludeStory(e.target.checked)} className="accent-clay-600" />
             {t.booklet.includeStory}
           </label>
         </div>
+
+        {generating && preferences.language !== 'en' && <p className="text-xs text-ink-500 mb-3">{t.booklet.generatingFonts}</p>}
 
         {error && <p className="text-sm text-clay-700 mb-3">{error}</p>}
 

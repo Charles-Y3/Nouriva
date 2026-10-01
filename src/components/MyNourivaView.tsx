@@ -12,10 +12,11 @@ import EmptyState from './EmptyState';
 import PostCard from './PostCard';
 import BookletModal from './BookletModal';
 
-type ShareState = 'live' | 'hidden' | 'removed';
+type ShareState = 'live' | 'hidden' | 'removed' | 'pending';
 
 function stateOf(post: Post): ShareState {
   if (post.status === 'hidden') return 'removed';
+  if (post.status === 'pending') return 'pending';
   return post.author_hidden ? 'hidden' : 'live';
 }
 
@@ -28,7 +29,7 @@ export default function MyNourivaView({
   onOpenPost: (id: string) => void;
   onEditShared: (post: Post, key: string) => void;
 }) {
-  const { drafts, deleteDraft, myPostIds, addMyPostRef } = useApp();
+  const { drafts, deleteDraft, myPostIds, addMyPostRef, reactionsGiven } = useApp();
   const t = useT();
   const [posts, setPosts] = useState<Post[]>([]);
   const [controlsAvailable, setControlsAvailable] = useState(true);
@@ -72,6 +73,29 @@ export default function MyNourivaView({
       cancelled = true;
     };
   }, [myPostIds, reloadTick]);
+
+  // Posts the person reacted to in Browse (felt this / inspired / thanks),
+  // newest reaction first. Their own posts are left out — those already have
+  // the "Shared by you" row.
+  const likedIds = useMemo(() => {
+    const ids: string[] = [];
+    [...reactionsGiven].reverse().forEach(entry => {
+      const id = entry.split(':')[0];
+      if (!ids.includes(id) && !myPostIds.some(r => r.id === id)) ids.push(id);
+    });
+    return ids;
+  }, [reactionsGiven, myPostIds]);
+  const [likedPosts, setLikedPosts] = useState<Post[]>([]);
+  const [likedOpen, setLikedOpen] = useState<Set<string>>(new Set());
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all(likedIds.map(id => fetchPostById(id).catch(() => null))).then(found => {
+      if (!cancelled) setLikedPosts(found.filter((p): p is Post => p !== null && p.status !== 'hidden' && !p.author_hidden));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [likedIds]);
 
   const refById = useMemo(() => new Map<string, MyPostRef>(myPostIds.map(r => [r.id, r])), [myPostIds]);
   const visiblePosts = posts.filter(p => !categoryFilter || p.category === categoryFilter);
@@ -137,11 +161,13 @@ export default function MyNourivaView({
     live: 'bg-sage-500/15 text-sage-600',
     hidden: 'bg-linen-200 text-ink-700',
     removed: 'bg-clay-500/15 text-clay-700',
+    pending: 'bg-linen-200 text-ink-700',
   };
   const stateLabel: Record<ShareState, string> = {
     live: t.myNouriva.stateLive,
     hidden: t.myNouriva.stateHidden,
     removed: t.myNouriva.stateRemoved,
+    pending: t.myNouriva.statePending,
   };
 
   return (
@@ -331,6 +357,45 @@ export default function MyNourivaView({
           </div>
           {restoreError && <p className="mt-1.5 text-xs text-clay-700">{t.myNouriva.restoreFailed}</p>}
         </div>
+      </section>
+
+      <section>
+        <h2 className="text-sm font-semibold text-ink-500 uppercase tracking-wide mb-2">{t.myNouriva.likedHeading}</h2>
+        {likedIds.length === 0 ? (
+          <p className="text-sm text-ink-500">{t.myNouriva.noLiked}</p>
+        ) : (
+          <ul className="space-y-2">
+            {likedPosts.map(p => {
+              const open = likedOpen.has(p.id);
+              return (
+                <li key={p.id} className="border border-linen-200 rounded-xl overflow-hidden bg-linen-100">
+                  <button
+                    type="button"
+                    onClick={() => setLikedOpen(prev => {
+                      const next = new Set(prev);
+                      if (next.has(p.id)) next.delete(p.id);
+                      else next.add(p.id);
+                      return next;
+                    })}
+                    aria-expanded={open}
+                    className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
+                  >
+                    <span className="min-w-0">
+                      <span className="block font-medium text-ink-900 truncate">{p.dish_name}</span>
+                      {p.category && <span className="text-xs text-ink-500">{t.categories[p.category] || p.category}</span>}
+                    </span>
+                    <span className="text-ink-500 text-sm shrink-0" aria-hidden="true">{open ? '▴' : '▾'}</span>
+                  </button>
+                  {open && (
+                    <div className="px-4 pb-4">
+                      <PostCard post={p} onOpen={onOpenPost} />
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+        )}
       </section>
     </div>
   );

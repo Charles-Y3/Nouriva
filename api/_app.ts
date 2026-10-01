@@ -3,6 +3,7 @@ import { put, del } from "@vercel/blob";
 import { createClient } from "@supabase/supabase-js";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { findDietViolation } from "./_dietFilter.js";
+import { screenContent, notifyAdminPending } from "./_screen.js";
 
 // All API route handlers, as a standalone Express app with no listen()/Vite/
 // static-file serving of its own — shared by two hosts:
@@ -78,6 +79,10 @@ function languageInstruction(lang: unknown): string {
   if (lang === 'zh-Hans') return ' Write every text value in Simplified Chinese (简体中文). JSON keys stay in English.';
   return ' Write every text value in English. JSON keys stay in English.';
 }
+
+// Practical cooking detail the AI must include in every ingredient list and
+// method, so a draft is usable without guesswork. Metric, rough, never exact.
+const DETAIL_RULE = ' Every ingredient line must carry a rough quantity with a metric weight or volume (e.g. "200 g firm tofu", "2 tbsp (30 ml) soy sauce"; for countable items add the approximate weight, e.g. "2 medium tomatoes (about 300 g)"). The method must be 3-6 short numbered steps; each step says the rough time and heat (e.g. "simmer 10 min on low heat"), and if anything is baked or roasted, state the oven temperature in °C (and °F) and the bake time. Begin the method with one short line giving rough prep time, cook time and servings, e.g. "Prep 10 min · Cook 25 min · Serves 2".';
 
 const DIET_RULE = ' The dish must be strictly vegetarian in the Buddhist vegetarian style: no meat, poultry, fish or seafood, no fish sauce, oyster sauce or animal stock, and NONE of the five pungent vegetables — onion, garlic, chives, green onion (scallion) or leek — nor asafoetida (hing), including in sauces, pastes and stock powders. Eggs and dairy are allowed. Use ginger, mushrooms, herbs, spices, sesame, citrus and similar for depth of flavour instead.';
 
@@ -261,7 +266,7 @@ export function createApiApp() {
           if (!spiritTag || !SPIRIT_TAG_VOCAB.includes(spiritTag)) {
             return res.status(400).json({ error: "spiritTag must be one of: " + SPIRIT_TAG_VOCAB.join(", ") });
           }
-          systemInstruction = `You suggest ONE simple, practical vegetarian dish idea for someone who wants to cook something that evokes the feeling "${spiritTag}", for the app Nouriva. Use common, easy-to-find ingredients — not an exotic or hard-to-source dish. Keep it achievable for a home cook. Do not add religious framing or claim the dish itself has spiritual properties — just explain briefly, in warm plain language, why preparing or sharing this dish suits that feeling (e.g. the ritual of making it, who it's shared with, what it's made of). Return ONLY a strict JSON object, no markdown, no commentary: { "dishName": string, "blurb": string (1-2 sentences), "ingredients": string (a short newline-separated list), "recipe": string (a short rough method, 2-4 sentences) }.${DIET_RULE}${langRule}`;
+          systemInstruction = `You suggest ONE simple, practical vegetarian dish idea for someone who wants to cook something that evokes the feeling "${spiritTag}", for the app Nouriva. Use common, easy-to-find ingredients — not an exotic or hard-to-source dish. Keep it achievable for a home cook. Do not add religious framing or claim the dish itself has spiritual properties — just explain briefly, in warm plain language, why preparing or sharing this dish suits that feeling (e.g. the ritual of making it, who it's shared with, what it's made of). Return ONLY a strict JSON object, no markdown, no commentary: { "dishName": string, "blurb": string (1-2 sentences), "ingredients": string (a newline-separated list), "recipe": string (the method, newline-separated steps) }.${DETAIL_RULE}${DIET_RULE}${langRule}`;
           userPrompt = `Feeling: ${spiritTag}`;
           break;
 
@@ -326,7 +331,7 @@ export function createApiApp() {
       if (detectedMime === 'image/jpg') detectedMime = 'image/jpeg';
       cleanBase64 = cleanBase64.replace(/[\r\n\s]/g, '');
 
-      const systemInstruction = `You are a careful assistant identifying a single vegetarian dish from a photo, for the app Nouriva. Name the specific dish, list its likely main ingredients, sketch a short rough method, and estimate calories/macros for the quantity visible (using scale cues like the plate/bowl size; account for likely hidden ingredients such as cooking oil or dressing rather than only what's directly visible — when uncertain, prefer a realistic middle estimate). Everything here is a starting draft the person will review and edit themselves, not a final answer — keep it concise and plausible rather than exhaustive. Return ONLY a strict JSON object, no markdown, no commentary: { "dishName": string, "ingredients": string (short newline-separated list), "recipe": string (2-4 sentence rough method), "calories": number, "carbsGrams": number, "proteinGrams": number, "fatGrams": number, "fiberGrams": number }.${languageInstruction(language)}`;
+      const systemInstruction = `You are a careful assistant identifying a single vegetarian dish from a photo, for the app Nouriva. Name the specific dish, list its likely main ingredients with rough quantities, sketch a short method with rough timings, and estimate calories/macros for the quantity visible (using scale cues like the plate/bowl size; account for likely hidden ingredients such as cooking oil or dressing rather than only what's directly visible — when uncertain, prefer a realistic middle estimate). Everything here is a starting draft the person will review and edit themselves, not a final answer — keep it concise and plausible rather than exhaustive. Return ONLY a strict JSON object, no markdown, no commentary: { "dishName": string, "ingredients": string (newline-separated list), "recipe": string (newline-separated steps), "calories": number, "carbsGrams": number, "proteinGrams": number, "fatGrams": number, "fiberGrams": number }.${DETAIL_RULE}${languageInstruction(language)}`;
 
       // The model may answer with prose, stray keys or an empty reply; try
       // once more before calling it a bad reply. Anything the provider itself
@@ -433,6 +438,51 @@ export function createApiApp() {
     res.json({ posts });
   });
 
+  // New posts arrive from the browser as status 'pending' (the only status the
+  // anon insert policy allows — see db/schema.sql section 6). This route is the
+  // one place a post becomes public: the author proves ownership with the
+  // share key, the AI check runs ONCE per post (screened_at is claimed
+  // atomically first), and only a clean verdict makes the post visible.
+  // Everything else waits for the admin on /review.
+  app.post("/api/posts/:id/screen", async (req, res) => {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return res.status(503).json({ error: "OWNER_ROUTES_UNAVAILABLE" });
+    const { key } = req.body || {};
+    const { data: row, error } = await supabase
+      .from('posts')
+      .select('id, dish_name, description, photo_url, ingredients, recipe, reflection, owner_key_hash, status, screened_at')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!row || !keyMatches(row.owner_key_hash, key)) return res.status(403).json({ error: "Forbidden" });
+
+    const stateOf = (status: string) => (status === 'visible' ? 'live' : status === 'hidden' ? 'removed' : 'pending');
+    if (row.status !== 'pending' || row.screened_at) return res.json({ state: stateOf(row.status) });
+
+    const { data: claimed, error: claimError } = await supabase
+      .from('posts')
+      .update({ screened_at: new Date().toISOString() })
+      .eq('id', row.id)
+      .is('screened_at', null)
+      .select('id');
+    if (claimError) return res.status(500).json({ error: claimError.message });
+    if (!claimed || claimed.length === 0) return res.json({ state: 'pending' });
+
+    const verdict = await screenContent({
+      dishName: row.dish_name, description: row.description, reflection: row.reflection,
+      ingredients: row.ingredients, recipe: row.recipe, photoUrl: row.photo_url,
+    });
+    console.log(JSON.stringify({ audit: 'screen', post: row.id, clean: verdict.clean, note: verdict.note.slice(0, 120) }));
+    const { error: updateError } = await supabase
+      .from('posts')
+      .update(verdict.clean ? { status: 'visible', moderation_note: null } : { moderation_note: verdict.note })
+      .eq('id', row.id)
+      .eq('status', 'pending');
+    if (updateError) return res.status(500).json({ error: updateError.message });
+    if (!verdict.clean) await notifyAdminPending(row.dish_name, verdict.note);
+    res.json({ state: verdict.clean ? 'live' : 'pending' });
+  });
+
   app.post("/api/posts/:id/visibility", async (req, res) => {
     const supabase = getSupabaseAdmin();
     if (!supabase) return res.status(503).json({ error: "OWNER_ROUTES_UNAVAILABLE" });
@@ -499,7 +549,18 @@ export function createApiApp() {
       return res.status(403).json({ error: "Removed by a moderator", code: "REMOVED_BY_MODERATOR" });
     }
 
+    // An edit is new content, so it is screened again before it replaces what
+    // is public. A clean edit stays/goes live; anything else drops the post
+    // back to the admin's queue (it disappears from Browse until approved).
+    const verdict = await screenContent({
+      dishName, description: str(description), reflection, ingredients: str(ingredients), recipe: str(recipe), photoUrl: str(photoUrl),
+    });
+    console.log(JSON.stringify({ audit: 'screen-edit', post: req.params.id, clean: verdict.clean, note: verdict.note.slice(0, 120) }));
+
     const { error: updateError } = await supabase.from('posts').update({
+      status: verdict.clean ? 'visible' : 'pending',
+      moderation_note: verdict.clean ? null : verdict.note,
+      screened_at: new Date().toISOString(),
       dish_name: dishName.trim(),
       description: str(description),
       photo_url: str(photoUrl),
@@ -515,7 +576,8 @@ export function createApiApp() {
       if (msg.includes('nouriva_duplicate')) return res.status(409).json({ error: "Duplicate", code: "DUPLICATE" });
       return res.status(500).json({ error: msg });
     }
-    res.json({ status: "ok" });
+    if (!verdict.clean) await notifyAdminPending(dishName.trim(), verdict.note);
+    res.json({ status: "ok", state: verdict.clean ? 'live' : 'pending' });
   });
 
   // --- Admin moderation (secret-header-gated, no UI in v1 — see README) ---
@@ -532,7 +594,29 @@ export function createApiApp() {
     res.json({ posts: data });
   });
 
-  app.post("/api/admin/posts/:id/hide", requireAdmin, async (req, res) => {
+  // Review queue: everything waiting (AI-flagged, not screened, or an edit that
+  // was flagged), oldest first, with the reason the screening left on it.
+  app.get("/api/admin/pending-posts", requireAdmin, async (req, res) => {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return res.status(503).json({ error: "Admin moderation is not configured on this server." });
+    const { data, error } = await supabase
+      .from('posts')
+      .select('id, dish_name, description, photo_url, ingredients, recipe, reflection, moderation_note, created_at')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ posts: data });
+  });
+
+  app.post("/api/admin/posts/:id/approve", requireAdmin, async (req, res) => {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return res.status(503).json({ error: "Admin moderation is not configured on this server." });
+    const { error } = await supabase.from('posts').update({ status: 'visible', moderation_note: null }).eq('id', req.params.id).eq('status', 'pending');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ status: "ok" });
+  });
+
+  app.post("/api/admin/posts/:id/hide",requireAdmin, async (req, res) => {
     const supabase = getSupabaseAdmin();
     if (!supabase) return res.status(503).json({ error: "Admin moderation is not configured on this server." });
     const { error } = await supabase.from('posts').update({ status: 'hidden' }).eq('id', req.params.id);

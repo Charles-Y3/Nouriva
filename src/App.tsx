@@ -13,6 +13,7 @@ import PostDetail from './components/PostDetail';
 import OnboardingModal from './components/OnboardingModal';
 import UpdateToast from './components/UpdateToast';
 import BackupNudge from './components/BackupNudge';
+import ReviewView from './components/ReviewView';
 
 function matchPostId(pathname: string): string | null {
   const m = pathname.match(/^\/post\/([^/]+)\/?$/);
@@ -74,6 +75,8 @@ export default function App() {
     saveDraft(draft);
     openDraftInCreate(draft.id);
   }
+
+  if (window.location.pathname.replace(/\/+$/, '') === '/review') return <ReviewView />;
 
   if (directPostId) {
     return (

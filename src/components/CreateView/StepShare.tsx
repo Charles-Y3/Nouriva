@@ -23,6 +23,8 @@ export default function StepShare({
   const t = useT();
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Set when the post is waiting for the admin's review: shown instead of leaving at once.
+  const [waiting, setWaiting] = useState(false);
 
   async function share() {
     setPublishing(true);
@@ -52,13 +54,15 @@ export default function StepShare({
       };
 
       if (isEdit) {
-        await editPost(draft.sharedPostId!, draft.sharedPostKey!, content);
+        const state = await editPost(draft.sharedPostId!, draft.sharedPostKey!, content);
         if (draft.photoDraftId) deleteDraftPhoto(draft.photoDraftId).catch(() => {});
         deleteDraft(draft.id);
+        if (state === 'pending') return setWaiting(true);
       } else {
-        const { post, key } = await createPost(content);
+        const { id, key, state } = await createPost(content);
         if (draft.photoDraftId) deleteDraftPhoto(draft.photoDraftId).catch(() => {});
-        markPublished(draft.id, post.id, key);
+        markPublished(draft.id, id, key);
+        if (state === 'pending') return setWaiting(true);
       }
       onDone();
     } catch (err: any) {
@@ -79,6 +83,18 @@ export default function StepShare({
   const isEdit = Boolean(draft.sharedPostId && draft.sharedPostKey);
   const configured = isSupabaseConfigured();
   const blocked = containsBlockedContent(draft.dishName, draft.reflection, draft.ingredients, draft.recipe);
+
+  if (waiting) {
+    return (
+      <div className="text-center py-10">
+        <p className="text-lg font-semibold text-ink-900">{t.create.share.waitingTitle}</p>
+        <p className="mt-2 text-sm text-ink-500">{t.create.share.waitingBody}</p>
+        <button type="button" onClick={onDone} className="mt-6 bg-clay-600 hover:bg-clay-700 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium">
+          {t.common.ok}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div>

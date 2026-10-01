@@ -43,6 +43,11 @@ export interface BookletOptions {
   editorNote?: { title: string; body: string; questions: string[] };
   language: Language;
   copy: BookletCopy;
+  // 'magazine' = one featured photo plus an "also inside" strip of thumbnails
+  // (default); 'tiles' = a photo collage.
+  coverStyle?: 'magazine' | 'tiles';
+  featuredId?: string; // the dish for the cover's big photo (default: first with a photo)
+  alsoInside?: string; // label above the thumbnail strip
   logoSrc?: string; // the Nouriva mark, shown on the cover and back cover
   appUrl?: string;  // link to the app, printed (and clickable) on the back cover
 }
@@ -113,8 +118,11 @@ function registerFace(face: CjkFace): string[] {
 function resolveFonts(language: Language): Fonts {
   const cjk = CJK_FONTS[language];
   if (!cjk) return { serif: 'Times-Roman', serifBold: 'Times-Bold', serifItalic: 'Times-Italic', sans: 'Helvetica', isCjk: false };
+  // One CJK family for every role: each face is ~2 MB per weight to download
+  // and parse in the browser, and loading both a serif and a sans family made
+  // Chinese booklets look frozen for a long time on the main thread.
   const serif = registerFace(cjk.serif);
-  const sans = registerFace(cjk.sans);
+  const sans = serif;
   // Chinese typography doesn't use italics, and only normal + bold faces are
   // registered — so "italic" roles fall back to the regular serif face.
   return { serif, serifBold: serif, serifItalic: serif, sans, isCjk: true };
@@ -187,6 +195,14 @@ function buildStyles(th: BookletTheme, f: Fonts, k = 1) {
     coverTagline: { fontFamily: f.sans, fontSize: 8, letterSpacing: track, textTransform: 'uppercase', color: th.accent, marginTop: 8, textAlign: 'center' },
     coverFrame: { marginTop: 24, marginHorizontal: 44, height: 470, borderWidth: 1.5, borderColor: th.accent, padding: 6 },
     coverPhoto: { width: '100%', height: '100%', objectFit: 'cover' },
+    coverAlsoLabel: { fontFamily: f.sans, fontSize: 7.5, letterSpacing: track, textTransform: 'uppercase', color: th.accent, marginTop: 8, marginBottom: 4 },
+    coverThumbRow: { flexDirection: 'row' },
+    coverThumb: { flexGrow: 1, flexBasis: 0 },
+    coverThumbImg: { width: '100%', height: 70, objectFit: 'cover' },
+    coverThumbName: { fontFamily: f.serif, fontSize: 8.5, color: th.paper, marginTop: 3, maxLines: 1 },
+    coverCollageBig: { width: '100%', flexGrow: 3, flexBasis: 0, objectFit: 'cover' },
+    coverCollageRow: { flexDirection: 'row', flexGrow: 2, flexBasis: 0, marginTop: 4 },
+    coverCollageSmall: { flexGrow: 1, flexBasis: 0, height: '100%', objectFit: 'cover' },
     coverBlock: { width: '100%', height: '100%', backgroundColor: th.accent, alignItems: 'center', justifyContent: 'center' },
     coverBlockLetter: { fontFamily: f.serifBold, fontSize: 150, color: th.deep },
     coverBottom: { marginTop: 26, paddingHorizontal: 44 },
@@ -288,7 +304,15 @@ function BookletDocument({ items, options }: { items: BookletItem[]; options: Bo
   const f = resolveFonts(options.language);
   const s = buildStyles(th, f);
   const { copy } = options;
-  const heroItem = items.find(i => i.photoSrc);
+  const withPhoto = items.filter(i => i.photoSrc);
+  // The featured dish gets the cover's big photo; the rest feed the thumbnails.
+  const heroItem = withPhoto.find(i => i.id === options.featuredId) || withPhoto[0];
+  const magazine = (options.coverStyle || 'magazine') === 'magazine';
+  const alsoInside = withPhoto.filter(i => i !== heroItem).slice(0, 3);
+  // Cover art: one dish gets a single full-bleed photo; three or more photos
+  // become a collage (one large, up to three small) so the cover says "a
+  // collection" rather than showing only the first recipe.
+  const coverPhotos = [heroItem, ...withPhoto.filter(i => i !== heroItem)].filter((i): i is BookletItem => Boolean(i)).slice(0, 4);
   const titleSize = options.title.length > 26 ? 34 : options.title.length > 16 ? 44 : 56;
   const pad = (n: number) => String(n).padStart(2, '0');
   const wrap = (text: string, width: number, size: number) => (f.isCjk ? wrapCjk(text, width, size) : text);
@@ -304,7 +328,33 @@ function BookletDocument({ items, options }: { items: BookletItem[]; options: Bo
           <Text style={s.coverTagline}>{copy.tagline}</Text>
         </View>
         <View style={s.coverFrame}>
-          {heroItem?.photoSrc ? (
+          {magazine && heroItem?.photoSrc ? (
+            <View style={{ width: '100%', height: '100%' }}>
+              <Image src={heroItem.photoSrc} style={{ width: '100%', flexGrow: 1, flexBasis: 0, objectFit: 'cover' }} />
+              {alsoInside.length > 0 && (
+                <View>
+                  {options.alsoInside ? <Text style={s.coverAlsoLabel}>{options.alsoInside}</Text> : null}
+                  <View style={s.coverThumbRow}>
+                    {alsoInside.map((p, i) => (
+                      <View key={p.id} style={[s.coverThumb, i > 0 ? { marginLeft: 6 } : {}]}>
+                        <Image src={p.photoSrc!} style={s.coverThumbImg} />
+                        <Text style={s.coverThumbName}>{p.dishName}</Text>
+                      </View>
+                    ))}
+                  </View>
+                </View>
+              )}
+            </View>
+          ) : coverPhotos.length >= 3 ? (
+            <View style={{ width: '100%', height: '100%' }}>
+              <Image src={coverPhotos[0].photoSrc!} style={s.coverCollageBig} />
+              <View style={s.coverCollageRow}>
+                {coverPhotos.slice(1).map((p, i) => (
+                  <Image key={p.id} src={p.photoSrc!} style={[s.coverCollageSmall, i > 0 ? { marginLeft: 4 } : {}]} />
+                ))}
+              </View>
+            </View>
+          ) : heroItem?.photoSrc ? (
             <Image src={heroItem.photoSrc} style={s.coverPhoto} />
           ) : (
             <View style={s.coverBlock}>

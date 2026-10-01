@@ -325,3 +325,51 @@ begin
   update posts set report_count = report_count + 1 where id = post_id and status = 'visible' and author_hidden = false;
 end;
 $$;
+
+
+-- 6. AI + admin review before a post goes public ----------------------
+--
+-- Safe to re-run. New posts are inserted as 'pending' (invisible to the
+-- public). Only the server (service role) can flip a post to 'visible':
+-- /api/posts/:id/screen does it when the AI check says the post is clean;
+-- anything flagged, or anything the AI check couldn't judge, stays
+-- 'pending' until the admin approves it (-> 'visible') or denies it
+-- (-> 'hidden') on the /review page. A browser can no longer publish a post
+-- straight to 'visible', even with the anon key.
+--  * moderation_note  why a post is waiting (AI reasons / "not screened").
+--  * screened_at      set once when the server claims a post for screening,
+--                     so the AI check can only be run once per post.
+
+alter table posts add column if not exists moderation_note text;
+alter table posts add column if not exists screened_at timestamptz;
+
+do $$
+declare c record;
+begin
+  for c in
+    select conname from pg_constraint
+    where conrelid = 'posts'::regclass and contype = 'c'
+      and pg_get_constraintdef(oid) ilike '%status%' and pg_get_constraintdef(oid) ilike '%visible%'
+  loop
+    execute format('alter table posts drop constraint %I', c.conname);
+  end loop;
+  alter table posts add constraint posts_status_check check (status in ('visible', 'hidden', 'pending'));
+end $$;
+
+create index if not exists posts_pending_idx on posts (created_at) where status = 'pending';
+
+drop policy if exists posts_insert_anon on posts;
+create policy posts_insert_anon on posts for insert to anon
+  with check (
+    reaction_felt_count = 0
+    and reaction_inspired_count = 0
+    and reaction_thanks_count = 0
+    and report_count = 0
+    and status = 'pending'
+    and author_hidden = false
+    and owner_key_hash is not null
+    and char_length(owner_key_hash) = 64
+    and reshare_count = 0
+    and moderation_note is null
+    and screened_at is null
+  );
