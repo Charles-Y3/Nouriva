@@ -48,6 +48,8 @@ export interface BookletOptions {
   // 'featured' = one big photo plus a strip of smaller "also inside" photos
   // (default); 'single' = just the one featured dish.
   coverStyle?: 'single' | 'featured';
+  // Recipe page layout: 'classic' (editorial, default) or 'playful' (rounded pills, tilted stickers).
+  layoutStyle?: 'classic' | 'playful';
   featuredId?: string; // the dish for the cover's big photo (default: first with a photo)
   alsoInside?: string; // label above the thumbnail strip
   logoSrc?: string; // the Nouriva mark, shown on the cover and back cover
@@ -83,6 +85,7 @@ interface Fonts {
   serifBold: string | string[];
   serifItalic: string | string[];
   sans: string | string[];
+  sansBold: string | string[];
   isCjk: boolean;
 }
 
@@ -119,7 +122,7 @@ function registerFace(face: CjkFace): string[] {
 
 function resolveFonts(language: Language): Fonts {
   const cjk = CJK_FONTS[language];
-  if (!cjk) return { serif: 'Times-Roman', serifBold: 'Times-Bold', serifItalic: 'Times-Italic', sans: 'Helvetica', isCjk: false };
+  if (!cjk) return { serif: 'Times-Roman', serifBold: 'Times-Bold', serifItalic: 'Times-Italic', sans: 'Helvetica', sansBold: 'Helvetica-Bold', isCjk: false };
   // One CJK family for every role: each face is ~2 MB per weight to download
   // and parse in the browser, and loading both a serif and a sans family made
   // Chinese booklets look frozen for a long time on the main thread.
@@ -127,7 +130,7 @@ function resolveFonts(language: Language): Fonts {
   const sans = serif;
   // Chinese typography doesn't use italics, and only normal + bold faces are
   // registered — so "italic" roles fall back to the regular serif face.
-  return { serif, serifBold: serif, serifItalic: serif, sans, isCjk: true };
+  return { serif, serifBold: serif, serifItalic: serif, sans, sansBold: sans, isCjk: true };
 }
 
 // react-pdf breaks long CJK runs at a "hyphenation point", which prints a
@@ -267,8 +270,8 @@ const PHOTO_MIN = 105;
 type Layout = 'sidebar' | 'wide';
 interface RecipePlan { layout: Layout; k: number; heroH: number; twoPage: boolean; alt: boolean }
 
-function estLines(text: string, width: number, size: number, cjk: boolean): number {
-  const perLine = Math.max(1, Math.floor(width / (size * (cjk ? 1 : 0.55))));
+function estLines(text: string, width: number, size: number, cjk: boolean, charW = 0.55): number {
+  const perLine = Math.max(1, Math.floor(width / (size * (cjk ? 1 : charW))));
   return text.split('\n').reduce((n, para) => n + Math.max(1, Math.ceil(para.length / perLine)), 0);
 }
 
@@ -362,6 +365,215 @@ function nutritionParts(n: NutritionEstimate | null | undefined, labels: Booklet
   if (n.fatGrams !== undefined) parts.push(`${labels.fat} ${Math.round(n.fatGrams)} g`);
   if (n.fiberGrams !== undefined) parts.push(`${labels.fiber} ${Math.round(n.fiberGrams)} g`);
   return parts;
+}
+
+// "Playful" recipe page: highlighted title, round photo with its timing line,
+// ingredient pills, offset step bubbles and a tilted note. The type scale and
+// photo size shrink until it fits one page; if it still can't, the step
+// bubbles (which never split) simply continue on a second page.
+const PLAY_W = 487; // A4 width 595 minus 2 x 54 margin
+// Average Helvetica glyph advance in em, measured on real recipes (0.55 over-estimated and shrank the photo for no reason).
+const PLAY_CHAR = 0.47;
+const PLAY_NOTE_CHAR = 0.44; // the note is set in Times-Italic, which is narrower
+const PLAY_PHOTO = 200;
+const STICKER = 64;
+const STICKER_GAP = 8;
+
+// AI recipes open the method with a timing line ("Prep 10 min · Cook 25 min ·
+// Serves 2"). The playful page shows that under the photo instead of as step 1.
+// "Prep 15 min · Cook 20 min · Serves 12" -> three stickers (label + value).
+function metaStickers(meta: string): { label: string; value: string }[] {
+  return meta.split(/\s*[·|]\s*/).filter(Boolean).slice(0, 3).map(seg => {
+    const m = seg.match(/^(\D+?)\s*(\d.*)$/);
+    return m ? { label: m[1].trim(), value: m[2].trim() } : { label: '', value: seg.trim() };
+  });
+}
+
+function playSteps(item: BookletItem): { meta: string; steps: string[] } {
+  const all = item.recipe ? toSteps(item.recipe) : [];
+  const first = all[0] || '';
+  const isMeta = first.length <= 80 && /[·|]/.test(first) && /\d/.test(first);
+  return isMeta ? { meta: first, steps: all.slice(1) } : { meta: '', steps: all };
+}
+
+function pillWidth(text: string, k: number, cjk: boolean): number {
+  return text.length * 10.5 * k * (cjk ? 1 : PLAY_CHAR) + 22;
+}
+
+// Greedy row packing, the way flex-wrap lays the pills out.
+function pillRows(lines: string[], k: number, cjk: boolean): number {
+  let rows = 1;
+  let x = 0;
+  let extra = 0;
+  for (const l of lines) {
+    const full = pillWidth(l, k, cjk);
+    if (full > PLAY_W) extra += estLines(l, PLAY_W - 22, 10.5 * k, cjk, PLAY_CHAR) - 1;
+    const w = Math.min(full, PLAY_W);
+    if (x + w > PLAY_W && x > 0) { rows++; x = 0; }
+    x += w + 5;
+  }
+  return rows + extra;
+}
+
+// Greedy word wrap for the title (it's big, so a char-count estimate is too coarse).
+function titleLines(text: string, width: number, size: number, cjk: boolean): number {
+  if (cjk) return estLines(text, width, size, true);
+  const em = size * 0.56;
+  let lines = 1;
+  let x = 0;
+  for (const w of text.split(/\s+/).filter(Boolean)) {
+    const ww = w.length * em;
+    if (x > 0 && x + em * 0.3 + ww > width) { lines++; x = ww; } else x += (x ? em * 0.3 : 0) + ww;
+  }
+  return lines;
+}
+
+function planPlayful(item: BookletItem, cjk: boolean, hasNutrition: boolean, flip = false): { k: number; photo: number } {
+  const { meta, steps } = playSteps(item);
+  const ingredients = item.ingredients ? toIngredients(item.ingredients) : [];
+  const avail = PAGE_H - 40 - FOOTER_RESERVE;
+  const stickerCount = metaStickers(meta).length;
+  const metaH = stickerCount ? STICKER + 16 : 0;
+  const metaW = stickerCount * STICKER + (stickerCount - 1) * STICKER_GAP;
+  let best = { k: 0.8, photo: 115 };
+  // Every recipe gets the same photo size so the booklet looks consistent; the
+  // type scale shrinks to make room. Only if it still can't fit at the smallest
+  // type does the photo step down.
+  for (const photo of [PLAY_PHOTO, 175, 150, 130, 115]) {
+    for (const k of [1, 0.92, 0.85, 0.8]) {
+      best = { k, photo };
+      const titleW = PLAY_W - (photo + 14) - 10;
+      const titleH = titleLines(item.dishName || ' ', titleW, 36 * k, cjk) * 36 * k * 1.2 * LH(cjk) + 6;
+      const tags = item.spiritTags.length > 0 ? 26 : 0;
+      const head = Math.max(photo + 14, titleH + tags + 30 + metaH);
+      if (titleW < metaW) continue; // the sticker row must fit beside the photo
+      const ing = ingredients.length ? 24 + pillRows(ingredients, k, cjk) * (10.5 * k * 1.3 * LH(cjk) + 17) : 0;
+      const stp = steps.reduce((h, l, i) => h + estLines(l, PLAY_W - ((i + (flip ? 1 : 0)) % 2 ? 40 : 18) - 46, 11 * k, cjk, PLAY_CHAR) * 11 * k * 1.4 * LH(cjk) + 28, 0);
+      const note = item.reflection ? estLines(item.reflection, PLAY_W - 34, 12 * k, cjk, PLAY_NOTE_CHAR) * 12 * k * 1.45 * LH(cjk) + 28 : 0;
+      const total = head + 16 + ing + 16 + stp + 6 + note + (hasNutrition ? 36 : 0);
+      if (total <= avail) return best;
+    }
+  }
+  return best;
+}
+
+function PlayfulRecipe({ item, idx, th, f, copy, bookTitle, wrap }: {
+  item: BookletItem; idx: number; th: BookletTheme; f: Fonts; copy: BookletCopy; bookTitle: string;
+  wrap: (text: string, width: number, size: number) => string;
+}) {
+  const { meta, steps } = playSteps(item);
+  const ingredients = item.ingredients ? toIngredients(item.ingredients) : [];
+  const tags = item.spiritTags.map(tag => item.spiritTagLabels[tag] || tag);
+  const n = item.nutrition;
+  const nutrition = nutritionParts(n, copy.nutritionLabels);
+  // Every other recipe is mirrored: photo on the left, the step zig-zag starts on
+  // the other side and the note tilts the other way.
+  const flip = idx % 2 === 1;
+  const { k, photo } = planPlayful(item, f.isCjk, nutrition.length > 0, flip);
+  const track = f.isCjk ? 1.2 : 1.8;
+  const stickers = metaStickers(meta);
+  const titleW = PLAY_W - (photo + 14) - 10;
+  const tilt = ['-2deg', '2deg', '-1deg', '1.5deg'];
+
+  return (
+    <Page size="A4" style={{ backgroundColor: th.paper, color: th.ink, fontFamily: f.sans, fontSize: 10.5, paddingTop: 40, paddingHorizontal: 54, paddingBottom: FOOTER_RESERVE }}>
+      <View style={{ flexDirection: flip ? 'row-reverse' : 'row', justifyContent: 'space-between' }}>
+        <View style={{ width: titleW, paddingTop: 10 }}>
+          <Text style={{ fontFamily: f.sans, fontSize: 9, letterSpacing: track, textTransform: 'uppercase', color: th.strong, marginBottom: 8 }}>
+            {[String(idx + 1).padStart(2, '0'), item.categoryLabel].filter(Boolean).join('  ·  ')}
+          </Text>
+          <View style={{ alignSelf: 'flex-start', maxWidth: titleW, transform: 'rotate(-2deg)', transformOrigin: 'left top' }}>
+            <Text style={{ fontFamily: f.sansBold, fontSize: 36 * k, lineHeight: 1.2, color: th.deep, backgroundColor: th.accent }}>
+              {wrap(item.dishName || ' ', titleW, 36 * k)}
+            </Text>
+          </View>
+          {tags.length > 0 && (
+            <View style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 14 }}>
+              {tags.slice(0, 3).map((tg, i) => (
+                <Text key={i} style={{ fontFamily: f.sans, fontSize: 8.5, color: th.paper, backgroundColor: th.strong, paddingVertical: 3, paddingHorizontal: 9, borderRadius: 10, marginRight: 5, marginBottom: 4 }}>
+                  {tg}
+                </Text>
+              ))}
+            </View>
+          )}
+          {stickers.length > 0 ? (
+            <View style={{ flexDirection: 'row', marginTop: 14 }}>
+              {stickers.map((st, i) => (
+                <View key={i} style={{
+                  width: STICKER, height: STICKER, borderRadius: STICKER / 2, marginLeft: i ? STICKER_GAP : 0,
+                  backgroundColor: i === 1 ? th.deep : th.strong, alignItems: 'center', justifyContent: 'center',
+                  transform: `rotate(${['-8deg', '5deg', '-4deg'][i]})`,
+                }}>
+                  {st.label ? <Text style={{ fontFamily: f.sans, fontSize: 7.5, letterSpacing: 0.8, textTransform: 'uppercase', color: th.accent }}>{st.label}</Text> : null}
+                  <Text style={{ fontFamily: f.sansBold, fontSize: st.value.length > 6 ? 10 : 13.5, lineHeight: 1.2, color: th.paper, textAlign: 'center', maxWidth: STICKER - 10 }}>{st.value}</Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+        </View>
+        <View style={{ width: photo + 14, alignItems: 'center' }}>
+          {item.photoSrc ? (
+            <Image src={item.photoSrc} style={{ width: photo, height: photo, borderRadius: photo / 2, objectFit: 'cover', borderWidth: 5, borderColor: th.accent }} />
+          ) : (
+            <View style={{ width: photo, height: photo, borderRadius: photo / 2, backgroundColor: th.accent, alignItems: 'center', justifyContent: 'center' }}>
+              <Text style={{ fontFamily: f.sansBold, fontSize: photo * 0.5, color: th.deep }}>{(item.dishName || '·').trim().charAt(0).toUpperCase()}</Text>
+            </View>
+          )}
+        </View>
+      </View>
+
+      {ingredients.length > 0 && (
+        <View style={{ marginTop: 16 }}>
+          <Text style={{ fontFamily: f.sans, fontSize: 8, letterSpacing: track, textTransform: 'uppercase', color: th.strong, marginBottom: 8 }}>{copy.ingredientsHeading}</Text>
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+            {ingredients.map((line, i) => (
+              <Text key={i} style={{
+                fontFamily: f.sans, fontSize: 10.5 * k, lineHeight: 1.3, color: th.ink,
+                backgroundColor: i % 2 === 0 ? th.accent : th.tint, borderRadius: 11, paddingVertical: 5, paddingHorizontal: 11,
+                marginRight: 5, marginBottom: 7, maxWidth: PLAY_W, transform: `rotate(${tilt[i % 4]})`,
+              }}>
+                {wrap(line, PLAY_W - 22, 10.5 * k)}
+              </Text>
+            ))}
+          </View>
+        </View>
+      )}
+
+      {steps.length > 0 && (
+        <View style={{ marginTop: 16 }}>
+          {steps.map((line, i) => {
+            const off = (i + (flip ? 1 : 0)) % 2 ? 40 : 18;
+            return (
+              <View key={i} wrap={false} style={{ flexDirection: 'row', alignItems: 'center', marginLeft: off, marginBottom: 10, backgroundColor: th.tint, borderRadius: 14, paddingVertical: 9, paddingRight: 14, paddingLeft: 30 }}>
+                <View style={{ position: 'absolute', left: -14, top: '50%', marginTop: -15, width: 30, height: 30, borderRadius: 15, backgroundColor: th.strong, alignItems: 'center', justifyContent: 'center' }}>
+                  <Text style={{ fontFamily: f.sansBold, fontSize: 14, color: th.paper }}>{i + 1}</Text>
+                </View>
+                <Text style={{ fontFamily: f.sans, fontSize: 11 * k, lineHeight: 1.4, flex: 1, color: th.ink }}>{wrap(line, PLAY_W - off - 46, 11 * k)}</Text>
+              </View>
+            );
+          })}
+        </View>
+      )}
+
+      {item.reflection ? (
+        <View wrap={false} style={{ marginTop: 6, backgroundColor: th.deep, borderRadius: 14, paddingVertical: 11, paddingHorizontal: 17, transform: flip ? 'rotate(1deg)' : 'rotate(-1deg)' }}>
+          <Text style={{ fontFamily: f.serifItalic, fontSize: 12 * k, lineHeight: 1.45, color: th.paper }}>{wrap(item.reflection, PLAY_W - 34, 12 * k)}</Text>
+        </View>
+      ) : null}
+      {nutrition.length > 0 && (
+        <View wrap={false} style={{ flexDirection: 'row', flexWrap: 'wrap', marginTop: 14 }}>
+          {nutrition.map((p, i) => (
+            <Text key={i} style={{ fontFamily: f.sans, fontSize: 9, color: th.strong, borderWidth: 1, borderColor: th.accent, borderRadius: 10, paddingVertical: 3, paddingHorizontal: 9, marginRight: 5, marginBottom: 4 }}>{p}</Text>
+          ))}
+        </View>
+      )}
+
+      <View style={{ position: 'absolute', bottom: 22, left: 44, right: 44, flexDirection: 'row', justifyContent: 'space-between', fontSize: 7.5, color: th.muted, letterSpacing: 1 }} fixed>
+        <Text>{bookTitle}</Text>
+        <Text render={({ pageNumber }) => String(pageNumber)} />
+      </View>
+    </Page>
+  );
 }
 
 function BookletDocument({ items, options }: { items: BookletItem[]; options: BookletOptions }) {
@@ -474,6 +686,9 @@ function BookletDocument({ items, options }: { items: BookletItem[]; options: Bo
 
       {/* One feature per recipe — one page each (two only when it truly cannot fit), layout alternates for rhythm */}
       {items.map((item, idx) => {
+        if (options.layoutStyle === 'playful') {
+          return <PlayfulRecipe key={item.id} item={item} idx={idx} th={th} f={f} copy={copy} bookTitle={options.title} wrap={wrap} />;
+        }
         const steps = item.recipe ? toSteps(item.recipe) : [];
         const ingredients = item.ingredients ? toIngredients(item.ingredients) : [];
         const tags = item.spiritTags.map(tag => item.spiritTagLabels[tag] || tag).join(' · ');
@@ -619,4 +834,4 @@ export async function generateBookletPdf(items: BookletItem[], options: BookletO
 
 // Exposed for the Node-side render check (scripts / tests), which needs a
 // Buffer instead of a browser Blob.
-export { BookletDocument };
+export { BookletDocument, planPlayful };

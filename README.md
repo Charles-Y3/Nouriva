@@ -98,11 +98,11 @@ misinformation), which is what report + admin review remain for. Sharing also re
 
 **Author controls (share keys).** There are no accounts, so authorship is proven by a secret key
 generated on the sharing device: only its SHA-256 is stored on the post (`owner_key_hash`); the
-key stays in "Shared by you" and its backup, and doubles as a *recovery code* (`<postId>.<key>`) the
-author can save and paste back in on another device. With the key an author can **hide** a post
-from Browse, **show it again**, or **edit** it (My Nouriva → Shared by you) — routes
-`/api/my/posts`, `/api/posts/:id/visibility` and `/api/posts/:id/edit`, which need
-`SUPABASE_SERVICE_ROLE_KEY`. Hiding never deletes: likes, reports and the key survive, and people
+key is kept with the post's entry in "Shared by you" and included in the backup (JSON export and
+folder auto-save), and the person never sees or handles it. With the key an author can **unshare** a post
+(hide it from Browse), **share it again**, **edit** it or **delete** it for good (My Nouriva → Shared by you) —
+routes `/api/my/posts`, `/api/posts/:id/visibility`, `/api/posts/:id/edit` and
+`/api/posts/:id/delete`, which need `SUPABASE_SERVICE_ROLE_KEY`. Unsharing never deletes: likes, reports and the key survive, and people
 who saved or liked the dish keep their copy. Showing again re-uses the same post and key (never
 mints a new one), is rate-limited (3 per day, 5-minute gap), and is refused for a post a moderator
 removed — `status = 'hidden'` (moderator) is separate from `author_hidden` (author). Edits pass the

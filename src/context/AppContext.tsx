@@ -40,6 +40,7 @@ interface AppContextType {
   deleteDraft: (id: string) => void;
   markPublished: (draftId: string | undefined, publishedPostId: string, key?: string) => void;
   addMyPostRef: (ref: MyPostRef) => void;
+  removeMyPostRef: (postId: string) => void;
   recordReactionGiven: (postId: string, type: ReactionType) => void;
   hasReacted: (postId: string, type: ReactionType) => boolean;
   recordReportGiven: (postId: string) => void;
@@ -176,8 +177,15 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     );
   };
 
-  // Restoring a share from a recovery code (see shareKeys.ts) — adds the ref
-  // or fills in a missing key on an existing one.
+  // The author deleted a shared post for good: forget it here, and turn any
+  // draft that was editing it back into an ordinary unshared draft (otherwise
+  // sharing it would try to update a post that no longer exists).
+  const removeMyPostRef = (postId: string) => {
+    setMyPostIds(prev => prev.filter(r => r.id !== postId));
+    setDrafts(prev => prev.map(d => (d.sharedPostId === postId ? { ...d, sharedPostId: undefined, sharedPostKey: undefined } : d)));
+  };
+
+  // Adds a share ref, or fills in a missing key on an existing one.
   const addMyPostRef = (ref: MyPostRef) => {
     setMyPostIds(prev =>
       prev.some(r => r.id === ref.id)
@@ -243,6 +251,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         deleteDraft,
         markPublished,
         addMyPostRef,
+        removeMyPostRef,
         recordReactionGiven,
         hasReacted,
         recordReportGiven,

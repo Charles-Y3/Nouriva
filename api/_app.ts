@@ -520,6 +520,33 @@ export function createApiApp() {
     res.json({ status: "ok", author_hidden: hidden });
   });
 
+  // Permanent delete by the author: the row and its photo go. A moderator
+  // removal stays on record (status 'hidden'), so it can't be deleted away.
+  app.post("/api/posts/:id/delete", async (req, res) => {
+    const supabase = getSupabaseAdmin();
+    if (!supabase) return res.status(503).json({ error: "OWNER_ROUTES_UNAVAILABLE" });
+    const { data: row, error } = await supabase
+      .from('posts')
+      .select('owner_key_hash, status, photo_url')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!row || !keyMatches(row.owner_key_hash, req.body?.key)) return res.status(403).json({ error: "Forbidden" });
+    if (row.status === 'hidden') {
+      return res.status(403).json({ error: "Removed by a moderator", code: "REMOVED_BY_MODERATOR" });
+    }
+    const { error: deleteError } = await supabase.from('posts').delete().eq('id', req.params.id);
+    if (deleteError) return res.status(500).json({ error: deleteError.message });
+    if (row.photo_url && process.env.BLOB_READ_WRITE_TOKEN) {
+      // Best-effort, same as the admin delete: the row is gone, which is what matters.
+      del(row.photo_url, { token: process.env.BLOB_READ_WRITE_TOKEN }).catch(err =>
+        console.error("Best-effort blob delete failed:", err)
+      );
+    }
+    console.log(JSON.stringify({ audit: 'author-delete', post: req.params.id }));
+    res.json({ status: "ok" });
+  });
+
   app.post("/api/posts/:id/edit", async (req, res) => {
     const supabase = getSupabaseAdmin();
     if (!supabase) return res.status(503).json({ error: "OWNER_ROUTES_UNAVAILABLE" });

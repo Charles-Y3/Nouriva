@@ -49,6 +49,7 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
   const [theme, setTheme] = useState<BookletThemeId>('forest');
   const [includeStory, setIncludeStory] = useState(false);
   const [coverStyle, setCoverStyle] = useState<'single' | 'featured'>('featured');
+  const [layoutStyle, setLayoutStyle] = useState<'classic' | 'playful'>('classic');
   const [featuredId, setFeaturedId] = useState('');
 
   const likedPostIds = useMemo(() => {
@@ -155,6 +156,7 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
         editorNote: story,
         language: preferences.language,
         coverStyle,
+        layoutStyle,
         featuredId: selectedDishes.some(d => d.id === featuredId) ? featuredId : undefined,
         alsoInside: t.booklet.alsoInside,
         copy: {
@@ -298,6 +300,24 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
                   </button>
                 );
               })}
+            </div>
+          </div>
+          <div>
+            <p className="text-xs text-ink-500 mb-1.5">{t.booklet.layoutStyleLabel}</p>
+            <div className="grid grid-cols-2 gap-2">
+              {(['classic', 'playful'] as const).map(id => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => setLayoutStyle(id)}
+                  aria-pressed={layoutStyle === id}
+                  className={`rounded-full border px-3 py-1.5 text-sm text-center transition-colors ${
+                    layoutStyle === id ? 'border-clay-600 text-ink-900' : 'border-linen-200 text-ink-700 hover:border-sage-400'
+                  }`}
+                >
+                  {id === 'classic' ? t.booklet.layoutClassic : t.booklet.layoutPlayful}
+                </button>
+              ))}
             </div>
           </div>
           <div>

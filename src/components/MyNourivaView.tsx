@@ -2,8 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useT } from '../hooks/useT';
 import { fetchPostById } from '../services/postsApi';
-import { fetchMyPosts, setPostHidden } from '../services/ownerApi';
-import { makeRecoveryCode, parseRecoveryCode } from '../services/shareKeys';
+import { deletePost, fetchMyPosts, setPostHidden } from '../services/ownerApi';
 import { ShareError } from '../services/postsApi';
 import { CATEGORIES } from '../types';
 import type { MyPostRef, Post } from '../types';
@@ -29,7 +28,7 @@ export default function MyNourivaView({
   onOpenPost: (id: string) => void;
   onEditShared: (post: Post, key: string) => void;
 }) {
-  const { drafts, deleteDraft, myPostIds, addMyPostRef, reactionsGiven } = useApp();
+  const { drafts, deleteDraft, myPostIds, removeMyPostRef, reactionsGiven } = useApp();
   const t = useT();
   const [posts, setPosts] = useState<Post[]>([]);
   const [controlsAvailable, setControlsAvailable] = useState(true);
@@ -38,9 +37,6 @@ export default function MyNourivaView({
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [busyId, setBusyId] = useState<string | null>(null);
   const [itemError, setItemError] = useState<Record<string, string>>({});
-  const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [restoreCode, setRestoreCode] = useState('');
-  const [restoreError, setRestoreError] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
 
   // The author's own view: keyed posts come from the key-checked owner route
@@ -133,27 +129,18 @@ export default function MyNourivaView({
     }
   }
 
-  async function copyCode(post: Post, key: string) {
+  async function removeForGood(post: Post, key: string) {
+    setBusyId(post.id);
+    setItemError(prev => ({ ...prev, [post.id]: '' }));
     try {
-      await navigator.clipboard.writeText(makeRecoveryCode(post.id, key));
-      setCopiedId(post.id);
-      setTimeout(() => setCopiedId(null), 2000);
-    } catch {
-      // Clipboard unavailable — the code is shown on screen to copy by hand.
-    }
-  }
-
-  async function restore() {
-    setRestoreError(false);
-    const parsed = parseRecoveryCode(restoreCode);
-    if (!parsed) return setRestoreError(true);
-    try {
-      const found = await fetchMyPosts([{ id: parsed.id, key: parsed.key, publishedAt: Date.now() }]);
-      if (found.length === 0) return setRestoreError(true);
-      addMyPostRef({ id: parsed.id, key: parsed.key, publishedAt: Date.parse(found[0].created_at) || Date.now() });
-      setRestoreCode('');
-    } catch {
-      setRestoreError(true);
+      await deletePost(post.id, key);
+      removeMyPostRef(post.id);
+    } catch (err) {
+      const code = err instanceof ShareError ? err.code : undefined;
+      const msg = code === 'removed' ? t.myNouriva.stateRemoved : code === 'unavailable' ? t.myNouriva.controlsUnavailable : t.myNouriva.actionFailed;
+      setItemError(prev => ({ ...prev, [post.id]: msg }));
+    } finally {
+      setBusyId(null);
     }
   }
 
@@ -305,6 +292,13 @@ export default function MyNourivaView({
                                 {t.myNouriva.showAgain}
                               </button>
                             )}
+                            <ConfirmButton
+                              label={t.myNouriva.deleteButton}
+                              prompt={t.myNouriva.deleteConfirm}
+                              onConfirm={() => removeForGood(p, key)}
+                              disabled={busyId === p.id}
+                              className="text-sm text-ink-500 hover:text-clay-700 underline"
+                            />
                           </div>
                         )}
 
@@ -312,24 +306,6 @@ export default function MyNourivaView({
 
                         {!key && state !== 'removed' && <p className="text-xs text-ink-500">{t.myNouriva.noKeyNote}</p>}
 
-                        {key && (
-                          <div className="text-xs text-ink-500">
-                            <p className="font-medium text-ink-700">{t.myNouriva.recoveryHeading}</p>
-                            <p className="mt-0.5">{t.myNouriva.recoveryHint}</p>
-                            <div className="mt-1.5 flex items-center gap-2">
-                              <code className="flex-1 min-w-0 truncate rounded bg-linen-50 border border-linen-200 px-2 py-1 font-mono">
-                                {makeRecoveryCode(p.id, key)}
-                              </code>
-                              <button
-                                type="button"
-                                onClick={() => copyCode(p, key)}
-                                className="shrink-0 text-clay-700 hover:text-clay-600 underline"
-                              >
-                                {copiedId === p.id ? t.myNouriva.codeCopied : t.myNouriva.copyCode}
-                              </button>
-                            </div>
-                          </div>
-                        )}
                       </div>
                     )}
                   </li>
@@ -338,27 +314,6 @@ export default function MyNourivaView({
             </ul>
           </>
         )}
-
-        <div className="mt-5 text-sm">
-          <p className="text-ink-500 mb-1.5">{t.myNouriva.restoreHeading}</p>
-          <div className="flex gap-2">
-            <input
-              value={restoreCode}
-              onChange={e => { setRestoreCode(e.target.value); setRestoreError(false); }}
-              placeholder={t.myNouriva.restorePlaceholder}
-              className="flex-1 min-w-0 rounded-full border border-linen-200 bg-linen-100 px-4 py-2 text-sm font-mono"
-            />
-            <button
-              type="button"
-              disabled={!restoreCode.trim()}
-              onClick={restore}
-              className="shrink-0 bg-linen-100 border border-linen-200 hover:border-sage-400 disabled:opacity-50 text-ink-700 rounded-full px-4 py-2 text-sm"
-            >
-              {t.myNouriva.restoreButton}
-            </button>
-          </div>
-          {restoreError && <p className="mt-1.5 text-xs text-clay-700">{t.myNouriva.restoreFailed}</p>}
-        </div>
       </section>
 
       <section>

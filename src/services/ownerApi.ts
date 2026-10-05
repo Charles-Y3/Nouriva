@@ -37,6 +37,11 @@ export async function setPostHidden(id: string, key: string, hidden: boolean): P
   await ownerFetch(`/api/posts/${id}/visibility`, { key, hidden });
 }
 
+/** Permanently deletes the author's own post (and its photo) from the database. */
+export async function deletePost(id: string, key: string): Promise<void> {
+  await ownerFetch(`/api/posts/${id}/delete`, { key });
+}
+
 export interface EditedPost {
   dishName: string;
   description?: string;
