@@ -118,7 +118,8 @@ export default function StepShare({
         </div>
       </div>
 
-      {!isEdit && <p className="mt-4 text-xs text-ink-500">{t.create.share.irreversibleNote}</p>}
+      <p className="mt-4 text-xs text-ink-500">{isEdit ? t.create.share.translationNoteEdit : t.create.share.translationNote}</p>
+      {!isEdit && <p className="mt-2 text-xs text-ink-500">{t.create.share.irreversibleNote}</p>}
 
       {!configured && <p className="mt-2 text-sm text-clay-700">{t.create.share.notConfigured}</p>}
       {!draft.category && <p className="mt-2 text-sm text-clay-700">{t.create.dishName.categoryRequired}</p>}

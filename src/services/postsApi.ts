@@ -1,6 +1,7 @@
 import { supabase } from './supabase';
 import { generateShareKey, getDeviceId, hashShareKey } from './shareKeys';
 import type { BrowseSort, NutritionEstimate, Post, ReactionType } from '../types';
+import { applyKeywords, keywordPlan } from './searchQuery';
 
 const POST_COLUMNS = 'id, dish_name, description, photo_url, ingredients, recipe, reflection, spirit_tags, category, nutrition, created_at, reaction_felt_count, reaction_inspired_count, reaction_thanks_count, report_count, status, author_hidden, source_lang, translated, translation_status';
 
@@ -16,24 +17,34 @@ export interface PostQuery {
 // filters + sort, all in Postgres, all inside the same anon SELECT RLS
 // policy as every other read.
 //
-// The text search is backed by the `search_vector` tsvector column (kept in
-// sync by a trigger — see db/schema.sql) + GIN index. `config: 'simple'` is
-// required and must match the config the trigger builds search_vector with —
-// PostgREST's .textSearch() otherwise builds its tsquery with the database's
-// default config (commonly 'english'), which tokenizes/stems differently from
-// 'simple' and silently matches nothing even though the searched word is
-// right there in the vector.
+// The text search is a keyword (substring) search over `search_text`, a
+// lower-cased string kept in sync by a trigger (db/schema.sql section 9) with
+// everything a reader could look for, in the author's words and the generated
+// translation. The old tsvector search couldn't find a word inside a Chinese
+// phrase (no spaces, so the phrase was one token). See searchQuery.ts.
 export async function queryPosts({ query = '', tag = null, category = null, sort = 'recent', limit }: PostQuery = {}): Promise<Post[]> {
-  let q = supabase.from('posts').select(POST_COLUMNS);
-  const trimmed = query.trim();
-  if (trimmed) q = q.textSearch('search_vector', trimmed, { type: 'websearch', config: 'simple' });
-  if (tag) q = q.contains('spirit_tags', [tag]);
-  if (category) q = q.eq('category', category);
-  q = sort === 'popular'
-    ? q.order('reaction_total', { ascending: false }).order('created_at', { ascending: false })
-    : q.order('created_at', { ascending: false });
-  if (limit) q = q.limit(limit);
-  const { data, error } = await q;
+  const plan = await keywordPlan(query);
+  const build = (legacySearch: boolean) => {
+    let q = supabase.from('posts').select(POST_COLUMNS);
+    if (legacySearch) {
+      if (query.trim()) q = q.textSearch('search_vector', query.trim(), { type: 'websearch', config: 'simple' });
+    } else {
+      q = applyKeywords(q, 'search_text', plan);
+    }
+    if (tag) q = q.contains('spirit_tags', [tag]);
+    if (category) q = q.eq('category', category);
+    q = sort === 'popular'
+      ? q.order('reaction_total', { ascending: false }).order('created_at', { ascending: false })
+      : q.order('created_at', { ascending: false });
+    if (limit) q = q.limit(limit);
+    return q;
+  };
+  let { data, error } = await build(false);
+  // Until db/schema.sql section 9 has been run, `search_text` doesn't exist: fall back to the
+  // old word search rather than breaking Browse. (Postgres 42703 = undefined column.)
+  if (error && plan.length > 0 && (error.code === '42703' || /search_text/.test(error.message || ''))) {
+    ({ data, error } = await build(true));
+  }
   if (error) throw error;
   return data as Post[];
 }

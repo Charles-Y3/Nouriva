@@ -243,12 +243,17 @@ ever a single click.
 
 ## Search
 
-Browse's search bar runs Postgres full-text search (a generated `tsvector` column + GIN index
-across dish name, reflection, ingredients, recipe, and spirit tags — see `db/schema.sql`) directly
-from the browser via the same anon-key + RLS model as everything else. No separate search service.
-Note: Postgres's built-in text search has no real Chinese word segmentation, so search quality on
-Chinese content is weaker than on English for now — flagged in `db/schema.sql`'s comments as worth
-revisiting if it matters more than expected.
+Browse's search bar is a keyword (substring) search: every word you type must appear somewhere in a
+post, so 壽司 finds 素食彩虹壽司 and "tom" finds "tomato". It runs in Postgres directly from the
+browser (same anon-key + RLS model as everything else, no separate search service) over
+`search_text`, a lower-cased string a trigger keeps in sync with the dish name, reflection,
+ingredients, recipe, feelings and the generated translation, so a post is found by its words in
+either language (`db/schema.sql` section 9; a trigram index is added when the extension is
+available). A Chinese word is also tried in the other script (叉燒 finds 叉烧), using
+`opencc-js`, loaded only when someone searches in Chinese. Code: `src/services/searchQuery.ts`,
+tests: `npm run test:search`. Until section 9 has been run the app falls back to the old
+full-text search (which can't find a word inside a Chinese phrase), so deploying first doesn't
+break Browse.
 
 ## Recipe booklet (PDF)
 

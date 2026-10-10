@@ -511,3 +511,54 @@ create policy posts_insert_anon on posts for insert to anon
     and char_length(btrim(coalesce(recipe, ''))) > 0
     and cardinality(spirit_tags) >= 1
   );
+
+
+-- 9. Keyword search (substring) in English and Chinese --------------------
+--
+-- Safe to re-run. The old full-text search ('simple' tsvector) can't find a
+-- word INSIDE a Chinese phrase (壽司 in 素食彩虹壽司) because Chinese has no
+-- spaces: the whole phrase is one token. Browse now searches `search_text`
+-- instead: one lower-cased string of everything a reader could look for, in
+-- the author's words AND the generated translation, matched by substring
+-- (ILIKE '%word%', every word of the query must match). The tsvector column
+-- stays, kept in sync, but Browse no longer uses it.
+
+alter table posts add column if not exists search_text text;
+
+create or replace function posts_update_search_vector()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector :=
+    setweight(to_tsvector('simple', coalesce(new.dish_name, '')), 'A') ||
+    setweight(to_tsvector('simple', array_to_string(new.spirit_tags, ' ')), 'A') ||
+    setweight(to_tsvector('simple', coalesce(new.reflection, '')), 'B') ||
+    setweight(to_tsvector('simple', coalesce(new.ingredients, '')), 'C') ||
+    setweight(to_tsvector('simple', coalesce(new.recipe, '')), 'C') ||
+    setweight(to_tsvector('simple', coalesce(new.translated->>'dish_name', '')), 'A') ||
+    setweight(to_tsvector('simple', coalesce(new.translated->>'reflection', '')), 'B') ||
+    setweight(to_tsvector('simple', coalesce(new.translated->>'ingredients', '')), 'C') ||
+    setweight(to_tsvector('simple', coalesce(new.translated->>'recipe', '')), 'C');
+  new.search_text := lower(concat_ws(' ',
+    new.dish_name, new.description, new.reflection, new.ingredients, new.recipe,
+    array_to_string(new.spirit_tags, ' '),
+    new.translated->>'dish_name', new.translated->>'description', new.translated->>'reflection',
+    new.translated->>'ingredients', new.translated->>'recipe'));
+  return new;
+end;
+$$;
+
+-- Fill it for existing posts: any UPDATE fires the trigger above (the content
+-- guard trigger only fires when the text columns themselves change).
+update posts set search_text = '';
+
+-- A trigram index speeds ILIKE up once there are many posts. Optional: if the
+-- extension can't be created here, search still works (it just scans).
+do $$
+begin
+  create extension if not exists pg_trgm;
+  create index if not exists posts_search_text_trgm_idx on posts using gin (search_text gin_trgm_ops);
+exception when others then
+  raise notice 'pg_trgm index skipped: %', sqlerrm;
+end $$;
