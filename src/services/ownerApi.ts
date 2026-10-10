@@ -1,5 +1,5 @@
 import type { MyPostRef, NutritionEstimate, Post } from '../types';
-import { ShareError } from './postsApi';
+import { ShareError, requestTranslation } from './postsApi';
 
 // Author-side actions, authorised by the per-post share key (see
 // shareKeys.ts). They go through the server (api/_app.ts) because anonymous
@@ -56,5 +56,7 @@ export interface EditedPost {
 
 export async function editPost(id: string, key: string, post: EditedPost): Promise<'live' | 'pending'> {
   const payload = await ownerFetch(`/api/posts/${id}/edit`, { key, ...post });
-  return payload.state === 'pending' ? 'pending' : 'live';
+  if (payload.state === 'pending') return 'pending';
+  requestTranslation(id, key);
+  return 'live';
 }

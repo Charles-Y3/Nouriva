@@ -152,7 +152,7 @@ export default function StepShare({
               label={isEdit ? t.create.share.updateButton : t.create.share.shareButton}
               prompt={isEdit ? t.create.share.updateConfirmPrompt : t.create.share.shareConfirmPrompt}
               onConfirm={share}
-              disabled={!configured || blocked || !draft.category}
+              disabled={!configured || blocked || !draft.category || !draft.ingredients?.trim() || !draft.recipe?.trim() || draft.spiritTags.length === 0 || !draft.reflection.trim()}
               className="bg-clay-600 hover:bg-clay-700 disabled:opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
             />
           )}

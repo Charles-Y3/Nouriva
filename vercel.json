@@ -13,5 +13,11 @@
     "api/index.ts": {
       "maxDuration": 30
     }
-  }
+  },
+  "crons": [
+    {
+      "path": "/api/translate/run",
+      "schedule": "0 4 * * *"
+    }
+  ]
 }

@@ -42,8 +42,9 @@ export default function StepSpiritTags({
         </button>
         <button
           type="button"
+          disabled={draft.spiritTags.length === 0}
           onClick={onNext}
-          className="bg-clay-600 hover:bg-clay-700 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
+          className="bg-clay-600 hover:bg-clay-700 disabled:opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
         >
           {t.common.next}
         </button>

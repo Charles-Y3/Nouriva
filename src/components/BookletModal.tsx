@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useT } from '../hooks/useT';
+import { useLocalizePost } from '../hooks/useLocalizePost';
 import { fetchPostById } from '../services/postsApi';
 import { getDraftPhoto, blobToDataUrl } from '../services/localDrafts';
 import type { BookletItem } from '../services/recipeBooklet';
@@ -31,6 +32,7 @@ function itemKey(pool: PoolKey, id: string) {
 export default function BookletModal({ onClose }: { onClose: () => void }) {
   const { drafts, myPostIds, reactionsGiven, preferences } = useApp();
   const t = useT();
+  const localize = useLocalizePost();
 
   const [sharedPosts, setSharedPosts] = useState<Post[]>([]);
   const [likedPosts, setLikedPosts] = useState<Post[]>([]);
@@ -192,7 +194,9 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
     }
   }
 
-  function postToItem(post: Post): BookletItem {
+  function postToItem(rawPost: Post): BookletItem {
+    // The booklet reads in the reader's settings language, like Browse does.
+    const post = localize(rawPost);
     return {
       id: post.id,
       dishName: post.dish_name,

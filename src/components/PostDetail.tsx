@@ -4,11 +4,15 @@ import { fetchPostById } from '../services/postsApi';
 import { useT } from '../hooks/useT';
 import type { Post } from '../types';
 import ReactionBar from './ReactionBar';
+import { useLocalizePost } from '../hooks/useLocalizePost';
+import type { LocalizedPost } from '../services/postLocale';
 import ReportButton from './ReportButton';
 
 export default function PostDetail({ postId, onBack }: { postId: string; onBack: () => void }) {
   const t = useT();
-  const [post, setPost] = useState<Post | null | undefined>(undefined);
+  const [rawPost, setPost] = useState<Post | null | undefined>(undefined);
+  const localize = useLocalizePost();
+  const post: LocalizedPost | null | undefined = rawPost ? localize(rawPost) : rawPost;
   const [copied, setCopied] = useState(false);
 
   useEffect(() => {
@@ -48,7 +52,12 @@ export default function PostDetail({ postId, onBack }: { postId: string; onBack:
             {post.photo_url && (
               <img src={post.photo_url} alt={post.dish_name} className="w-full rounded-2xl mb-5 object-cover max-h-[420px]" />
             )}
-            <h1 className="text-2xl font-semibold">{post.dish_name}</h1>
+            <h1 className="text-2xl font-semibold">
+              {post.dish_name}
+              {post.originalPending && (
+                <span className="ml-2 align-middle rounded-full border border-linen-200 px-2 py-0.5 text-xs font-medium text-ink-500">{t.browse.originalTag}</span>
+              )}
+            </h1>
             {post.description && <p className="text-ink-500 mt-1">{post.description}</p>}
 
             <blockquote className="mt-5 text-lg leading-relaxed text-ink-700 italic border-l-2 border-clay-500 pl-4">

@@ -52,6 +52,12 @@ export interface Post {
   // sticky); `author_hidden` is the author's own hide/show switch.
   status: 'visible' | 'hidden' | 'pending';
   author_hidden: boolean;
+  // Language versions (see src/services/postLocale.ts): the original columns
+  // above are what the author typed, in `source_lang`; `translated` is the
+  // server-generated version in the other language once it is ready.
+  source_lang?: 'en' | 'zh' | null;
+  translated?: { dish_name?: string; description?: string; reflection?: string; ingredients?: string; recipe?: string } | null;
+  translation_status?: 'pending' | 'running' | 'done' | 'paused' | 'failed' | null;
 }
 
 // An in-progress, unpublished post — local-only until Share.

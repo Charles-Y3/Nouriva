@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { CATEGORIES } from '../../types';
 import type { Draft } from '../../types';
 import { useT } from '../../hooks/useT';
@@ -15,7 +14,7 @@ export default function StepDishName({
   onBack: () => void;
 }) {
   const t = useT();
-  const [showMore, setShowMore] = useState(Boolean(draft.ingredients || draft.recipe));
+  const complete = Boolean(draft.ingredients?.trim() && draft.recipe?.trim());
 
   return (
     <div>
@@ -44,37 +43,30 @@ export default function StepDishName({
         </select>
       </label>
 
-      {showMore ? (
-        <div className="mt-4 space-y-3">
-          <textarea
-            value={draft.ingredients || ''}
-            onChange={e => update({ ingredients: e.target.value })}
-            placeholder={t.create.dishName.ingredientsPlaceholder}
-            rows={2}
-            maxLength={4000}
-            className="w-full rounded-xl border border-linen-200 bg-linen-100 px-4 py-2.5 text-sm"
-          />
-          <textarea
-            value={draft.recipe || ''}
-            onChange={e => update({ recipe: e.target.value })}
-            placeholder={t.create.dishName.recipePlaceholder}
-            rows={2}
-            maxLength={4000}
-            className="w-full rounded-xl border border-linen-200 bg-linen-100 px-4 py-2.5 text-sm"
-          />
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setShowMore(true)}
-          className="mt-3 text-sm text-clay-700 hover:text-clay-600 underline"
-        >
-          {t.create.dishName.addMore}
-        </button>
-      )}
+      <div className="mt-4 space-y-3">
+        <textarea
+          value={draft.ingredients || ''}
+          onChange={e => update({ ingredients: e.target.value })}
+          placeholder={t.create.dishName.ingredientsPlaceholder + ' *'}
+          rows={3}
+          maxLength={4000}
+          className="w-full rounded-xl border border-linen-200 bg-linen-100 px-4 py-2.5 text-sm"
+        />
+        <textarea
+          value={draft.recipe || ''}
+          onChange={e => update({ recipe: e.target.value })}
+          placeholder={t.create.dishName.recipePlaceholder + ' *'}
+          rows={4}
+          maxLength={4000}
+          className="w-full rounded-xl border border-linen-200 bg-linen-100 px-4 py-2.5 text-sm"
+        />
+      </div>
 
       {draft.dishName.trim() && !draft.category && (
         <p className="mt-2 text-xs text-clay-700">{t.create.dishName.categoryRequired}</p>
+      )}
+      {draft.dishName.trim() && draft.category && !complete && (
+        <p className="mt-2 text-xs text-clay-700">{t.create.dishName.recipeRequired}</p>
       )}
 
       <div className="mt-6 flex justify-between">
@@ -83,7 +75,7 @@ export default function StepDishName({
         </button>
         <button
           type="button"
-          disabled={!draft.dishName.trim() || !draft.category}
+          disabled={!draft.dishName.trim() || !draft.category || !complete}
           onClick={onNext}
           className="bg-clay-600 hover:bg-clay-700 disabled:opacity-50 text-linen-50 rounded-full px-6 py-2.5 text-sm font-medium"
         >

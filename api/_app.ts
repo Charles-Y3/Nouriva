@@ -3,7 +3,9 @@ import { put, del } from "@vercel/blob";
 import { createClient } from "@supabase/supabase-js";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { findDietViolation } from "./_dietFilter.js";
-import { screenContent, notifyAdminPending } from "./_screen.js";
+import { screenContent, notifyAdminPending, notifyAdminText } from "./_screen.js";
+import { detectSourceLang, processIds, processQueue, supabaseStore, translateConfig, translateRow, type Deps } from "./_translate.js";
+import { BLOCKED_PATTERN } from "./_blocked.js";
 
 // All API route handlers, as a standalone Express app with no listen()/Vite/
 // static-file serving of its own — shared by two hosts:
@@ -97,12 +99,6 @@ function keyMatches(storedHash: string | null | undefined, key: unknown): boolea
   return a.length === b.length && timingSafeEqual(a, b);
 }
 
-// Same list as src/utils/contentFilter.ts and the posts_no_blocked_content
-// CHECK in db/schema.sql — edits made through the owner route are checked
-// here too, so editing can't be used to slip past the baseline filter.
-const BLOCKED_PATTERN =
-  /fuck|shit|bitch|asshole|bastard|cunt|dick|piss|nigger|nigga|faggot|retard|whore|slut|rape|kill\s*yourself|\bkys\b|操你|傻逼|傻屄|婊子|賤人|贱人|白痴|智障|死全家|干你娘|幹你娘/i;
-
 async function callChatCompletion(config: AiConfig, system: string, userContent: unknown): Promise<string> {
   const res = await fetch(`${config.baseUrl}/chat/completions`, {
     method: 'POST',
@@ -148,15 +144,16 @@ function normalizeFood(raw: any) {
   };
 }
 
-export function createApiApp() {
+// `opts.admin` lets the route tests (scripts/test-routes.mts) swap in an in-memory database.
+export function createApiApp(opts: { admin?: () => any } = {}) {
   const app = express();
 
-  const getSupabaseAdmin = () => {
+  const getSupabaseAdmin = opts.admin ?? (() => {
     const url = process.env.VITE_SUPABASE_URL;
     const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
     if (!url || !serviceKey) return null;
     return createClient(url, serviceKey);
-  };
+  });
 
   function requireAdmin(req: express.Request, res: express.Response, next: express.NextFunction) {
     const expected = process.env.ADMIN_SECRET;
@@ -415,7 +412,7 @@ export function createApiApp() {
   //    undo it.
   //  - Showing again is rate-limited; hiding (the safe direction) is not.
   //  - Edits go through the same baseline content filter as new posts.
-  const OWNER_COLUMNS = 'id, dish_name, description, photo_url, ingredients, recipe, reflection, spirit_tags, category, nutrition, created_at, reaction_felt_count, reaction_inspired_count, reaction_thanks_count, report_count, status, author_hidden';
+  const OWNER_COLUMNS = 'id, dish_name, description, photo_url, ingredients, recipe, reflection, spirit_tags, category, nutrition, created_at, reaction_felt_count, reaction_inspired_count, reaction_thanks_count, report_count, status, author_hidden, source_lang, translated, translation_status';
   const RESHARE_LIMIT_PER_DAY = 3;
   const RESHARE_MIN_GAP_MS = 5 * 60 * 1000;
   const DAY_MS = 24 * 60 * 60 * 1000;
@@ -475,7 +472,11 @@ export function createApiApp() {
     console.log(JSON.stringify({ audit: 'screen', post: row.id, clean: verdict.clean, note: verdict.note.slice(0, 120) }));
     const { error: updateError } = await supabase
       .from('posts')
-      .update(verdict.clean ? { status: 'visible', moderation_note: null } : { moderation_note: verdict.note })
+      .update({
+        ...(verdict.clean ? { status: 'visible', moderation_note: null } : { moderation_note: verdict.note }),
+        source_lang: detectSourceLang(row),
+        translation_status: 'pending',
+      })
       .eq('id', row.id)
       .eq('status', 'pending');
     if (updateError) return res.status(500).json({ error: updateError.message });
@@ -556,7 +557,11 @@ export function createApiApp() {
       return res.status(400).json({ error: "dishName and reflection are required" });
     }
     if (!CATEGORY_VOCAB.includes(category)) return res.status(400).json({ error: "A category is required", code: "CATEGORY_REQUIRED" });
+    if (typeof ingredients !== 'string' || !ingredients.trim() || typeof recipe !== 'string' || !recipe.trim()) {
+      return res.status(400).json({ error: "Ingredients and a method are required", code: "RECIPE_REQUIRED" });
+    }
     const tags = Array.isArray(spiritTags) ? spiritTags.filter((t: unknown) => SPIRIT_TAG_VOCAB.includes(t as string)) : [];
+    if (tags.length === 0) return res.status(400).json({ error: "Pick at least one feeling", code: "FEELING_REQUIRED" });
     const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v : null);
     if (BLOCKED_PATTERN.test([dishName, description, reflection, ingredients, recipe].filter(Boolean).join(' '))) {
       return res.status(422).json({ error: "Blocked content", code: "BLOCKED_CONTENT" });
@@ -597,6 +602,13 @@ export function createApiApp() {
       spirit_tags: tags,
       category: category ?? null,
       nutrition: nutrition && typeof nutrition === 'object' ? nutrition : null,
+      // The text changed, so the old translation is stale: drop it at once and queue a new one.
+      source_lang: detectSourceLang({ dish_name: dishName, description: str(description), reflection, ingredients: str(ingredients), recipe: str(recipe) }),
+      translated: null,
+      translation_status: 'pending',
+      translation_attempts: 0,
+      translation_started_at: null,
+      translated_at: null,
     }).eq('id', req.params.id);
     if (updateError) {
       const msg = String(updateError.message || '');
@@ -605,6 +617,87 @@ export function createApiApp() {
     }
     if (!verdict.clean) await notifyAdminPending(dishName.trim(), verdict.note);
     res.json({ status: "ok", state: verdict.clean ? 'live' : 'pending' });
+  });
+
+  // --- Translation (see api/_translate.ts) ---
+  // Everything here works on posts already in the database and only ever does
+  // work the queue itself defines, so none of it can be used to run an
+  // arbitrary translation or to spend more than the queue's own backlog.
+  const translateDeps = (): Deps | null => {
+    const db = getSupabaseAdmin();
+    const cfg = translateConfig();
+    if (!db || !cfg) return null;
+    return {
+      store: supabaseStore(db),
+      translate: row => translateRow(cfg, row),
+      notify: {
+        paused: n => notifyAdminText('Nouriva: translations paused',
+          `The AI provider limit was reached, so translating new dishes is paused (${n} waiting). Posts stay visible in their original language and it resumes automatically.`),
+        cleared: () => notifyAdminText('Nouriva: translations caught up', 'Translations resumed and the waiting dishes are all translated.'),
+      },
+    };
+  };
+
+  // The author's own device asks for its post to be translated right after it
+  // goes live (or after an edit). The share key proves ownership.
+  app.post("/api/posts/:id/translate", async (req, res) => {
+    const supabase = getSupabaseAdmin();
+    const deps = translateDeps();
+    if (!supabase || !deps) return res.status(503).json({ error: "TRANSLATION_UNAVAILABLE" });
+    const { data: row, error } = await supabase.from('posts').select('owner_key_hash').eq('id', req.params.id).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!row || !keyMatches(row.owner_key_hash, req.body?.key)) return res.status(403).json({ error: "Forbidden" });
+    const result = await processIds(deps, [req.params.id]);
+    res.json({ status: "ok", ...result });
+  });
+
+  // Works through the waiting queue a few posts at a time. Called by the daily
+  // Vercel cron and, throttled, by pages that notice a post still waiting. It
+  // takes no input and respects a quota pause, so it is safe to leave open.
+  let lastQueueRun = 0;
+  const runQueue = async (req: express.Request, res: express.Response) => {
+    const deps = translateDeps();
+    if (!deps) return res.status(503).json({ error: "TRANSLATION_UNAVAILABLE" });
+    if (Date.now() - lastQueueRun < 20_000) return res.json({ status: "ok", throttled: true });
+    lastQueueRun = Date.now();
+    res.json({ status: "ok", ...(await processQueue(deps, 3)) });
+  };
+  app.get("/api/translate/run", runQueue);
+  app.post("/api/translate/run", runQueue);
+
+  // Existing posts predate translation. dryRun returns translations for review
+  // WITHOUT saving; otherwise the posts are put in the queue and the first few run.
+  app.post("/api/admin/translate-backfill", requireAdmin, async (req, res) => {
+    const supabase = getSupabaseAdmin();
+    const cfg = translateConfig();
+    const deps = translateDeps();
+    if (!supabase || !cfg || !deps) return res.status(503).json({ error: "TRANSLATION_UNAVAILABLE" });
+    const limit = Math.min(Math.max(parseInt(String(req.body?.limit ?? 10), 10) || 10, 1), 50);
+    const { data: rows, error } = await supabase
+      .from('posts')
+      .select('id, dish_name, description, reflection, ingredients, recipe')
+      .eq('status', 'visible')
+      .is('translation_status', null)
+      .order('created_at', { ascending: true })
+      .limit(limit);
+    if (error) return res.status(500).json({ error: error.message });
+    if (req.body?.dryRun) {
+      const out: unknown[] = [];
+      for (const row of rows || []) {
+        try {
+          const { from, translated } = await translateRow(cfg, row);
+          out.push({ id: row.id, source_lang: from, original: row, translated });
+        } catch (e: any) {
+          out.push({ id: row.id, error: e?.message || 'failed' });
+          if (e?.retryAfterMs) break; // quota: stop the dry run
+        }
+      }
+      return res.json({ dryRun: true, results: out });
+    }
+    for (const row of rows || []) {
+      await supabase.from('posts').update({ source_lang: detectSourceLang(row), translation_status: 'pending' }).eq('id', row.id).is('translation_status', null);
+    }
+    res.json({ status: "ok", queued: (rows || []).length, ...(await processQueue(deps, 3)) });
   });
 
   // --- Admin moderation (secret-header-gated, no UI in v1 — see README) ---

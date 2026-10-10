@@ -2,7 +2,7 @@ import { supabase } from './supabase';
 import { generateShareKey, getDeviceId, hashShareKey } from './shareKeys';
 import type { BrowseSort, NutritionEstimate, Post, ReactionType } from '../types';
 
-const POST_COLUMNS = 'id, dish_name, description, photo_url, ingredients, recipe, reflection, spirit_tags, category, nutrition, created_at, reaction_felt_count, reaction_inspired_count, reaction_thanks_count, report_count, status, author_hidden';
+const POST_COLUMNS = 'id, dish_name, description, photo_url, ingredients, recipe, reflection, spirit_tags, category, nutrition, created_at, reaction_felt_count, reaction_inspired_count, reaction_thanks_count, report_count, status, author_hidden, source_lang, translated, translation_status';
 
 export interface PostQuery {
   query?: string;
@@ -119,7 +119,10 @@ export async function createPost(post: NewPost): Promise<{ id: string; key: stri
       body: JSON.stringify({ key }),
     });
     const payload = await res.json().catch(() => ({}));
-    if (res.ok && payload.state === 'live') state = 'live';
+    if (res.ok && payload.state === 'live') {
+      state = 'live';
+      requestTranslation(id, key);
+    }
   } catch {
     // stays pending
   }
@@ -134,4 +137,24 @@ export async function reactToPost(postId: string, reaction: ReactionType): Promi
 export async function reportPost(postId: string): Promise<void> {
   const { error } = await supabase.rpc('report_post', { post_id: postId });
   if (error) throw error;
+}
+
+// Asks the server to translate a post that just went live (or was just edited).
+// Fire and forget: if it fails or the provider's quota is out, the post stays
+// in the server's queue and shows its original until the translation lands.
+export function requestTranslation(id: string, key: string): void {
+  fetch(`/api/posts/${id}/translate`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ key }),
+  }).catch(() => {});
+}
+
+// Browse notices a post still waiting for its translation and nudges the
+// queue, at most once every two minutes per tab.
+let lastNudge = 0;
+export function nudgeTranslationQueue(): void {
+  if (Date.now() - lastNudge < 120_000) return;
+  lastNudge = Date.now();
+  fetch('/api/translate/run', { method: 'POST' }).catch(() => {});
 }

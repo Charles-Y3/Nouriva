@@ -40,6 +40,8 @@ Security policies, the full-text search index behind Browse's search bar, and th
 (`react_to_post`, `report_post`) the app calls directly from the browser. The file is idempotent —
 re-run it after pulling an update: section 5 adds categories, share keys, author hide/show and the
 anti-spam trigger to an existing database (Browse fails to load until it has been run).
+**Section 8 (language versions, mandatory fields) must be run BEFORE deploying the app version that
+uses it**: the new app reads columns that only exist after it.
 
 ## Deploying to Vercel
 
@@ -151,6 +153,45 @@ English, Traditional Chinese (繁體中文), and Simplified Chinese (简体中�
 launch (auto-detected from the browser as a starting guess) and changeable anytime in Settings.
 All UI strings live in `src/i18n/translations.ts`; there's no i18n library, just a plain object
 indexed by the active language.
+
+### One language per reader (translation)
+
+Every post keeps exactly what its author typed and, once live, gets a generated version in the
+other language (English <-> Chinese). A reader sees every post, in the author's own text or the
+generated one, **in their settings language only**; Traditional/Simplified Chinese is converted on
+the device (`opencc-js`, loaded only for Chinese readers). A post whose translation isn't ready
+yet shows its original with a small "Original · translating" tag. Drafts stay local, as typed;
+nothing is translated until Share.
+
+- Code: `api/_translate.ts` (the gate and the queue), routes in `api/_app.ts`, picking the
+  version in `src/services/postLocale.ts`.
+- The model only proposes. A translation is stored only if code accepts it: exact fields, length
+  limits, same line count, every number kept, nothing the baseline filter blocks, no non-vegetarian
+  word the source didn't have. Otherwise it is retried once, then dropped (readers keep the original).
+- Model: the server's own key (`TRANSLATE_API_KEY`, else `AI_API_KEY`, else the moderation key),
+  never a key from a request. On Groq the default model is `openai/gpt-oss-120b` (override with
+  `TRANSLATE_MODEL`): the Qwen model used for moderation allows only 1,000 output tokens per
+  minute on the free tier, too little for one recipe, and a separate model keeps translation's
+  quota apart from moderation's.
+- Limits: a short per-minute limit is waited out; a longer one pauses the queue (state in the
+  `translation_state` table), and if the wait is 10+ minutes you get one email (same
+  `RESEND_API_KEY`/`ADMIN_EMAIL` as moderation), then one more when it has caught up. The queue
+  resumes by itself: a daily Vercel cron (`vercel.json`, `/api/translate/run`; Hobby plans allow
+  daily only) plus a throttled nudge from Browse when it sees a post still waiting.
+- Existing posts (from before this feature) are queued by an admin call, after a dry run that
+  returns the translations for review without saving anything:
+
+  ```bash
+  curl -X POST $APP/api/admin/translate-backfill -H "x-admin-secret: $ADMIN_SECRET" \
+    -H "Content-Type: application/json" -d '{"dryRun": true}'
+  curl -X POST $APP/api/admin/translate-backfill -H "x-admin-secret: $ADMIN_SECRET" \
+    -H "Content-Type: application/json" -d '{}'
+  ```
+- Tests: `npm run test:translate` (the gate, the queue, quota pause/resume) and
+  `npm run test:routes` (screen/edit/translate routes against an in-memory database).
+
+New posts must include ingredients, a method and at least one feeling (photo is optional); this
+is checked in the form, in `/api/posts/:id/edit` and in the database's insert policy.
 
 ## Install as an app (PWA)
 

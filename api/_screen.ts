@@ -160,3 +160,27 @@ export async function notifyAdminPending(dishName: string, note: string): Promis
     console.error('Admin email failed:', err);
   }
 }
+
+// Plain-text email to the admin (translation queue paused / resumed). Same
+// best-effort rules as above: without RESEND_API_KEY and ADMIN_EMAIL it does
+// nothing. No post text is ever included.
+export async function notifyAdminText(subject: string, text: string): Promise<void> {
+  const key = process.env.RESEND_API_KEY;
+  const to = process.env.ADMIN_EMAIL;
+  if (!key || !to) return;
+  try {
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify({
+        from: process.env.RESEND_FROM || 'Nouriva <onboarding@resend.dev>',
+        to: [to],
+        subject,
+        html: `<p>${escapeHtml(text.slice(0, 600))}</p>`,
+      }),
+      signal: AbortSignal.timeout(6000),
+    });
+  } catch (err) {
+    console.error('Admin email failed:', err);
+  }
+}

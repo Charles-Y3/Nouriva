@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { queryPosts } from '../services/postsApi';
+import { nudgeTranslationQueue, queryPosts } from '../services/postsApi';
 import { isSupabaseConfigured } from '../services/supabase';
 import { CATEGORIES, SPIRIT_TAGS } from '../types';
 import type { BrowseSort, Post } from '../types';
@@ -36,6 +36,7 @@ export default function BrowseView({
   const [sort, setSort] = useState<BrowseSort>('recent');
   const [browsing, setBrowsing] = useState(false);
   const [showInspire, setShowInspire] = useState(false);
+  const [showFilters, setShowFilters] = useState(false);
 
   // A Story's "cook something to match" lands here with a feeling to open
   // Inspire me on.
@@ -61,13 +62,18 @@ export default function BrowseView({
       // non-default sort shows the full matching set.
       const plainFeed = !isFilteringNow && sort === 'recent';
       queryPosts({ query, tag: activeTag, category: activeCategory, sort, limit: plainFeed ? 12 : undefined })
-        .then(setPosts)
+        .then(list => {
+          setPosts(list);
+          // A post still waiting for its translation: nudge the server's queue (throttled).
+          if (list.some(p => p.translation_status === 'pending' || p.translation_status === 'paused')) nudgeTranslationQueue();
+        })
         .catch(() => setError('load_failed'));
     }, query.trim() ? 300 : 0);
     return () => clearTimeout(handle);
   }, [query, activeTag, activeCategory, sort]);
 
   const isFiltering = useMemo(() => browsing, [browsing]);
+  const filterCount = (activeTag ? 1 : 0) + (activeCategory ? 1 : 0) + (sort !== 'recent' ? 1 : 0);
 
   return (
     <div className="pt-2">
@@ -115,39 +121,62 @@ export default function BrowseView({
             placeholder={t.browse.searchPlaceholder}
             className="w-full rounded-full border border-linen-200 bg-linen-100 px-4 py-2.5 text-sm placeholder:text-ink-500/60"
           />
-          <div className="grid grid-cols-3 gap-2">
-            <select
-              value={activeTag ?? ''}
-              onChange={e => setActiveTag(e.target.value || null)}
-              aria-label={t.browse.feelingLabel}
-              className={selectClass}
+          <div className="flex justify-end">
+            <button
+              type="button"
+              onClick={() => setShowFilters(v => !v)}
+              aria-expanded={showFilters}
+              className="rounded-full border border-linen-200 bg-linen-100 px-3.5 py-1.5 text-xs text-ink-700 hover:border-sage-400"
             >
-              <option value="">{t.browse.anyFeeling}</option>
-              {SPIRIT_TAGS.map(tag => (
-                <option key={tag} value={tag}>{t.spiritTags[tag]}</option>
-              ))}
-            </select>
-            <select
-              value={activeCategory ?? ''}
-              onChange={e => setActiveCategory(e.target.value || null)}
-              aria-label={t.browse.categoryLabel}
-              className={selectClass}
-            >
-              <option value="">{t.browse.allCategories}</option>
-              {CATEGORIES.map(c => (
-                <option key={c} value={c}>{t.categories[c]}</option>
-              ))}
-            </select>
-            <select
-              value={sort}
-              onChange={e => setSort(e.target.value as BrowseSort)}
-              aria-label={t.browse.sortLabel}
-              className={selectClass}
-            >
-              <option value="recent">{t.browse.sortRecent}</option>
-              <option value="popular">{t.browse.sortPopular}</option>
-            </select>
+              {t.browse.filtersButton}{filterCount > 0 ? ` · ${filterCount}` : ''} {showFilters ? '▴' : '▾'}
+            </button>
           </div>
+          {showFilters && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-3 gap-2">
+                <select
+                  value={activeTag ?? ''}
+                  onChange={e => setActiveTag(e.target.value || null)}
+                  aria-label={t.browse.feelingLabel}
+                  className={selectClass}
+                >
+                  <option value="">{t.browse.anyFeeling}</option>
+                  {SPIRIT_TAGS.map(tag => (
+                    <option key={tag} value={tag}>{t.spiritTags[tag]}</option>
+                  ))}
+                </select>
+                <select
+                  value={activeCategory ?? ''}
+                  onChange={e => setActiveCategory(e.target.value || null)}
+                  aria-label={t.browse.categoryLabel}
+                  className={selectClass}
+                >
+                  <option value="">{t.browse.allCategories}</option>
+                  {CATEGORIES.map(c => (
+                    <option key={c} value={c}>{t.categories[c]}</option>
+                  ))}
+                </select>
+                <select
+                  value={sort}
+                  onChange={e => setSort(e.target.value as BrowseSort)}
+                  aria-label={t.browse.sortLabel}
+                  className={selectClass}
+                >
+                  <option value="recent">{t.browse.sortRecent}</option>
+                  <option value="popular">{t.browse.sortPopular}</option>
+                </select>
+              </div>
+              {filterCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => { setActiveTag(null); setActiveCategory(null); setSort('recent'); }}
+                  className="text-xs text-clay-700 hover:text-clay-600 underline"
+                >
+                  {t.browse.clearFilters}
+                </button>
+              )}
+            </div>
+          )}
         </div>
       )}
 

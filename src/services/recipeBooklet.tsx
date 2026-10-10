@@ -595,7 +595,10 @@ function PlayfulRecipe({ item, idx, th, f, copy, bookTitle, wrap }: {
 
 function BookletDocument({ items, options }: { items: BookletItem[]; options: BookletOptions }) {
   const th = BOOKLET_THEMES[options.theme];
-  const f = resolveFonts(options.language);
+  // Chinese text in an English-settings booklet (a local draft typed in Chinese)
+  // needs the Chinese font too, or it prints as blank boxes.
+  const hasCjk = items.some(i => CJK_CHAR.test([i.dishName, i.reflection, i.ingredients, i.recipe].join(' ')));
+  const f = resolveFonts(options.language === 'en' && hasCjk ? 'zh-Hant' : options.language);
   const s = buildStyles(th, f);
   const { copy } = options;
   const withPhoto = items.filter(i => i.photoSrc);

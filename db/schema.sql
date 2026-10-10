@@ -421,3 +421,93 @@ begin
   where id = post_id and status = 'visible' and author_hidden = false;
 end;
 $$;
+
+
+-- 8. Language versions + mandatory recipe fields -------------------------
+--
+-- Safe to re-run. RUN THIS BEFORE deploying the matching app version.
+-- Every post keeps what the author typed (the original columns) and gets a
+-- generated version in the other language, so each reader sees ONE language:
+--  * source_lang          'en' | 'zh': what the author wrote (set by the server).
+--  * translated           {dish_name, description, reflection, ingredients,
+--                          recipe} in the OTHER language. Written only by the
+--                          server (service role); the anon insert policy below
+--                          forces it to start empty, so text can't be smuggled
+--                          past screening through this column.
+--  * translation_status   pending | running | done | paused | failed.
+--                          'paused' = the AI provider's quota ran out; the queue
+--                          resumes by itself (see api/_translate.ts).
+--  * translation_started_at  claim time; lets a crashed run be picked up again
+--                          and makes a stale result (post edited meanwhile)
+--                          get discarded.
+-- New posts must also carry ingredients, a method and at least one feeling.
+-- Older posts without them keep working (enforced in the insert policy only).
+
+alter table posts add column if not exists source_lang text check (source_lang in ('en', 'zh'));
+alter table posts add column if not exists translated jsonb;
+alter table posts add column if not exists translation_status text
+  check (translation_status in ('pending', 'running', 'done', 'paused', 'failed'));
+alter table posts add column if not exists translation_attempts int not null default 0;
+alter table posts add column if not exists translation_started_at timestamptz;
+alter table posts add column if not exists translated_at timestamptz;
+
+create index if not exists posts_translation_queue_idx on posts (created_at)
+  where translation_status in ('pending', 'paused', 'running');
+
+-- One row: when the translation queue is paused until, and whether the admin
+-- was already emailed about the pause. RLS on with no policy = service role only.
+create table if not exists translation_state (
+  id int primary key default 1 check (id = 1),
+  paused_until timestamptz,
+  pause_notified boolean not null default false,
+  updated_at timestamptz not null default now()
+);
+insert into translation_state (id) values (1) on conflict do nothing;
+alter table translation_state enable row level security;
+
+-- Search finds a post by its words in either language.
+create or replace function posts_update_search_vector()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.search_vector :=
+    setweight(to_tsvector('simple', coalesce(new.dish_name, '')), 'A') ||
+    setweight(to_tsvector('simple', array_to_string(new.spirit_tags, ' ')), 'A') ||
+    setweight(to_tsvector('simple', coalesce(new.reflection, '')), 'B') ||
+    setweight(to_tsvector('simple', coalesce(new.ingredients, '')), 'C') ||
+    setweight(to_tsvector('simple', coalesce(new.recipe, '')), 'C') ||
+    setweight(to_tsvector('simple', coalesce(new.translated->>'dish_name', '')), 'A') ||
+    setweight(to_tsvector('simple', coalesce(new.translated->>'reflection', '')), 'B') ||
+    setweight(to_tsvector('simple', coalesce(new.translated->>'ingredients', '')), 'C') ||
+    setweight(to_tsvector('simple', coalesce(new.translated->>'recipe', '')), 'C');
+  return new;
+end;
+$$;
+
+drop policy if exists posts_insert_anon on posts;
+create policy posts_insert_anon on posts for insert to anon
+  with check (
+    reaction_felt_count = 0
+    and reaction_inspired_count = 0
+    and reaction_thanks_count = 0
+    and report_count = 0
+    and status = 'pending'
+    and author_hidden = false
+    and owner_key_hash is not null
+    and char_length(owner_key_hash) = 64
+    and reshare_count = 0
+    and moderation_note is null
+    and screened_at is null
+    and moderated_at is null
+    and category in ('Main', 'Soup', 'Salad', 'Breakfast', 'Snack', 'Dessert', 'Bakery', 'Drink')
+    and source_lang is null
+    and translated is null
+    and translation_status is null
+    and translation_attempts = 0
+    and translation_started_at is null
+    and translated_at is null
+    and char_length(btrim(coalesce(ingredients, ''))) > 0
+    and char_length(btrim(coalesce(recipe, ''))) > 0
+    and cardinality(spirit_tags) >= 1
+  );
