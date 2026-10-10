@@ -60,7 +60,9 @@ export interface BookletOptions {
 // would render as blank boxes without a registered font that actually has
 // them. Only load these matching the booklet generator's own UI language —
 // English stays on the zero-download built-in fonts. A booklet mixing
-// languages the UI language doesn't cover is a known, accepted gap.
+// languages the UI language doesn't cover is a known, accepted gap (Chinese
+// scripts cover each other, see resolveFonts; English text in a Chinese UI is
+// fine, Chinese text in an English-UI booklet is not).
 //
 // Fontsource splits CJK fonts into many unicode-range files, and the main
 // "chinese-*" file lacks the full-width punctuation (，！？；：（）), so the
@@ -134,6 +136,14 @@ function resolveFonts(language: Language): Fonts {
   // and parse in the browser, and loading both a serif and a sans family made
   // Chinese booklets look frozen for a long time on the main thread.
   const serif = registerFace(cjk.serif);
+  // Recipes are written in either script whatever the UI language is (a
+  // Traditional UI showing a post written in Simplified, and vice versa). Each
+  // script's font lacks characters the other uses (烧 悦 觉 / 燒 悅 覺 ...) and
+  // react-pdf draws those as garbage glyphs, so the other script's main font
+  // goes last in the fallback chain. Loaded on demand and cheap to parse (TTF).
+  const other = CJK_FONTS[language === 'zh-Hant' ? 'zh-Hans' : 'zh-Hant']!.serif;
+  registerFamily(other.pkg, other.pkg, other.main);
+  serif.push(other.pkg);
   const sans = serif;
   // Chinese typography doesn't use italics, and only normal + bold faces are
   // registered — so "italic" roles fall back to the regular serif face.
