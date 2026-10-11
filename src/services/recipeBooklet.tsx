@@ -3,6 +3,8 @@ import { Document, Page, View, Text, Image, Link, StyleSheet, Font, pdf } from '
 import type { Language, NutritionEstimate } from '../types';
 import { ingredientLines } from '../utils/ingredients';
 import { BOOKLET_THEMES, type BookletTheme, type BookletThemeId } from './bookletThemes';
+import { makeGlyphFixer } from './glyphFix';
+import { loadScriptConverters } from './searchQuery';
 
 // Magazine-style recipe booklet: a cover with a masthead and hero photo, a
 // contents page, an optional editor's note, one recipe feature per page
@@ -595,10 +597,7 @@ function PlayfulRecipe({ item, idx, th, f, copy, bookTitle, wrap }: {
 
 function BookletDocument({ items, options }: { items: BookletItem[]; options: BookletOptions }) {
   const th = BOOKLET_THEMES[options.theme];
-  // Chinese text in an English-settings booklet (a local draft typed in Chinese)
-  // needs the Chinese font too, or it prints as blank boxes.
-  const hasCjk = items.some(i => CJK_CHAR.test([i.dishName, i.reflection, i.ingredients, i.recipe].join(' ')));
-  const f = resolveFonts(options.language === 'en' && hasCjk ? 'zh-Hant' : options.language);
+  const f = resolveFonts(fontLanguage(items, options));
   const s = buildStyles(th, f);
   const { copy } = options;
   const withPhoto = items.filter(i => i.photoSrc);
@@ -848,8 +847,46 @@ function BookletDocument({ items, options }: { items: BookletItem[]; options: Bo
   );
 }
 
+// Chinese text in an English-settings booklet (a local draft typed in Chinese)
+// needs the Chinese font too, or it prints as blank boxes.
+function fontLanguage(items: BookletItem[], options: BookletOptions): Language {
+  const hasCjk = items.some(i => CJK_CHAR.test([i.dishName, i.reflection, i.ingredients, i.recipe].join(' ')));
+  return options.language === 'en' && hasCjk ? 'zh-Hant' : options.language;
+}
+
+// With Chinese fonts, characters none of them can draw would print as wrong glyphs
+// (see glyphFix.ts): swap them for a drawable equivalent before building the PDF.
+async function withDrawableText(items: BookletItem[], options: BookletOptions): Promise<{ items: BookletItem[]; options: BookletOptions }> {
+  const language = fontLanguage(items, options);
+  if (language === 'en') return { items, options };
+  const fix = makeGlyphFixer(language, await loadScriptConverters());
+  const opt = (s?: string) => (s ? fix(s) : s);
+  return {
+    items: items.map(i => ({
+      ...i,
+      dishName: fix(i.dishName),
+      reflection: fix(i.reflection),
+      ingredients: opt(i.ingredients),
+      recipe: opt(i.recipe),
+      categoryLabel: opt(i.categoryLabel),
+      spiritTagLabels: Object.fromEntries(Object.entries(i.spiritTagLabels).map(([k, v]) => [k, fix(v)])),
+    })),
+    options: {
+      ...options,
+      title: fix(options.title),
+      dedication: opt(options.dedication),
+      editorNote: options.editorNote && {
+        title: fix(options.editorNote.title),
+        body: fix(options.editorNote.body),
+        questions: options.editorNote.questions.map(fix),
+      },
+    },
+  };
+}
+
 export async function generateBookletPdf(items: BookletItem[], options: BookletOptions): Promise<Blob> {
-  return pdf(<BookletDocument items={items} options={options} />).toBlob();
+  const fixed = await withDrawableText(items, options);
+  return pdf(<BookletDocument items={fixed.items} options={fixed.options} />).toBlob();
 }
 
 // Exposed for the Node-side render check (scripts / tests), which needs a

@@ -2,8 +2,9 @@
 // may become, and the queue that pauses on quota and resumes by itself.
 // Run: npm run test:translate   (no network, no database: fakes for both)
 import assert from 'node:assert/strict';
+import { textLang as clientTextLang } from '../src/utils/textLanguage.ts';
 import {
-  QuotaError, TranslationInvalid, detectSourceLang, processIds, processQueue, translateConfig, translateRow, validateTranslation,
+  QuotaError, TranslationInvalid, textLang, detectSourceLang, processIds, processQueue, translateConfig, translateRow, validateTranslation,
   MAX_ATTEMPTS, type Deps, type PostRow, type Store, type Translated,
 } from '../api/_translate.ts';
 
@@ -58,6 +59,12 @@ await test('Chinese with a few English words is Chinese', () => assert.equal(det
 await test('Traditional and Simplified are both zh', () => {
   assert.equal(detectSourceLang(SRC), 'zh');
   assert.equal(detectSourceLang({ dish_name: '蜜汁叉烧', reflection: '感觉很忐忑。' }), 'zh');
+});
+
+await test('the browser and the server decide the language identically (same rule, two copies)', () => {
+  const corpus = ['', '   ', '123 g', 'Tomato eggs', '番茄炒蛋', '蜜汁叉烧', 'Mapo tofu 麻婆豆腐 with rice and a little chili oil and herbs', '素食 pasta 配蘑菇', 'ありがとう',
+    'Sushi 壽司', '壽司 sushi roll rice', 'a b c 好', 'ABC 一二三四五六', '一 two three four five six seven eight nine ten'];
+  for (const text of corpus) assert.equal(clientTextLang(text), textLang(text), JSON.stringify(text));
 });
 
 console.log('the gate (validateTranslation)');

@@ -14,7 +14,8 @@
     "build:stories": "node scripts/build-stories.mjs",
     "test:translate": "tsx scripts/test-translate.mts",
     "test:routes": "tsx scripts/test-routes.mts",
-    "test:search": "tsx scripts/test-search.mts"
+    "test:search": "tsx scripts/test-search.mts",
+    "test:glyphfix": "tsx scripts/test-glyphfix.mts"
   },
   "dependencies": {
     "@react-pdf/renderer": "^4.9.0",

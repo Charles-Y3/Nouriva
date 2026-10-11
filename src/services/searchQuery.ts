@@ -20,7 +20,7 @@ export function likeEscape(word: string): string {
 
 // opencc-js is ~1 MB: only fetched when someone actually searches in Chinese.
 let converters: Promise<{ toTrad: (s: string) => string; toSimp: (s: string) => string }> | null = null;
-function scriptConverters() {
+export function loadScriptConverters() {
   return (converters ??= Promise.all([import('opencc-js/cn2t'), import('opencc-js/t2cn')]).then(([a, b]) => ({
     toTrad: a.Converter({ from: 'cn', to: 't' }),
     toSimp: b.Converter({ from: 't', to: 'cn' }),
@@ -31,7 +31,7 @@ function scriptConverters() {
 export async function wordVariants(word: string): Promise<string[]> {
   if (!HAS_CJK.test(word)) return [word];
   try {
-    const { toTrad, toSimp } = await scriptConverters();
+    const { toTrad, toSimp } = await loadScriptConverters();
     return [...new Set([word, toTrad(word), toSimp(word)])];
   } catch {
     return [word];

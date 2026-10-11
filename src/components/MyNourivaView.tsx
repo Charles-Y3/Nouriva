@@ -9,6 +9,7 @@ import type { MyPostRef, Post } from '../types';
 import ConfirmButton from './ConfirmButton';
 import EmptyState from './EmptyState';
 import PostCard from './PostCard';
+import { useLocalizePost } from '../hooks/useLocalizePost';
 import BookletModal from './BookletModal';
 
 type ShareState = 'live' | 'hidden' | 'removed' | 'pending';
@@ -30,6 +31,7 @@ export default function MyNourivaView({
 }) {
   const { drafts, deleteDraft, myPostIds, removeMyPostRef, reactionsGiven } = useApp();
   const t = useT();
+  const localize = useLocalizePost();
   const [posts, setPosts] = useState<Post[]>([]);
   const [controlsAvailable, setControlsAvailable] = useState(true);
   const [showBooklet, setShowBooklet] = useState(false);
@@ -250,7 +252,7 @@ export default function MyNourivaView({
                       className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
                     >
                       <span className="min-w-0">
-                        <span className={`block font-medium truncate ${state === 'live' ? 'text-ink-900' : 'text-ink-500'}`}>{p.dish_name}</span>
+                        <span className={`block font-medium truncate ${state === 'live' ? 'text-ink-900' : 'text-ink-500'}`}>{localize(p).dish_name}</span>
                         <span className="mt-0.5 flex flex-wrap items-center gap-2">
                           {p.category && <span className="text-xs text-ink-500">{t.categories[p.category] || p.category}</span>}
                           <span className={`text-[11px] rounded-full px-2 py-0.5 ${badgeClass[state]}`}>{stateLabel[state]}</span>
@@ -338,7 +340,7 @@ export default function MyNourivaView({
                     className="w-full flex items-center justify-between gap-3 px-4 py-3 text-left"
                   >
                     <span className="min-w-0">
-                      <span className="block font-medium text-ink-900 truncate">{p.dish_name}</span>
+                      <span className="block font-medium text-ink-900 truncate">{localize(p).dish_name}</span>
                       {p.category && <span className="text-xs text-ink-500">{t.categories[p.category] || p.category}</span>}
                     </span>
                     <span className="text-ink-500 text-sm shrink-0" aria-hidden="true">{open ? '▴' : '▾'}</span>

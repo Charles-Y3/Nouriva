@@ -2,6 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { useT } from '../hooks/useT';
 import { useLocalizePost } from '../hooks/useLocalizePost';
+import { readerLang } from '../services/postLocale';
+import { textLang } from '../utils/textLanguage';
 import { fetchPostById } from '../services/postsApi';
 import { getDraftPhoto, blobToDataUrl } from '../services/localDrafts';
 import type { BookletItem } from '../services/recipeBooklet';
@@ -33,6 +35,14 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
   const { drafts, myPostIds, reactionsGiven, preferences } = useApp();
   const t = useT();
   const localize = useLocalizePost();
+  // The booklet reads in ONE language, the settings language. Published posts come in that
+  // language already (see localizePost); a local draft is only ever as typed, so one written in
+  // the other language can't join until it has been shared and translated.
+  const myLang = readerLang(preferences.language);
+  const draftIsOtherLanguage = (d: Draft) => {
+    const text = [d.dishName, d.reflection, d.ingredients, d.recipe].filter(Boolean).join(' ');
+    return text.trim() !== '' && textLang(text) !== myLang;
+  };
 
   const [sharedPosts, setSharedPosts] = useState<Post[]>([]);
   const [likedPosts, setLikedPosts] = useState<Post[]>([]);
@@ -81,11 +91,11 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
   const selectedDishes = useMemo(() => {
     const out: { id: string; name: string }[] = [];
     const add = (id: string, name: string) => { if (!out.some(o => o.id === id)) out.push({ id, name }); };
-    sharedPosts.forEach(p => selected.has(itemKey('shared', p.id)) && add(p.id, p.dish_name));
-    likedPosts.forEach(p => selected.has(itemKey('liked', p.id)) && add(p.id, p.dish_name));
+    sharedPosts.forEach(p => selected.has(itemKey('shared', p.id)) && add(p.id, localize(p).dish_name));
+    likedPosts.forEach(p => selected.has(itemKey('liked', p.id)) && add(p.id, localize(p).dish_name));
     drafts.forEach((d: Draft) => selected.has(itemKey('drafts', d.id)) && add(d.id, d.dishName || t.booklet.untitledDraft));
     return out;
-  }, [sharedPosts, likedPosts, drafts, selected, t]);
+  }, [sharedPosts, likedPosts, drafts, selected, t, localize]);
 
   function toggle(key: string) {
     setSelected(prev => {
@@ -96,7 +106,8 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
     });
   }
 
-  function toggleAll(pool: PoolKey, ids: string[]) {
+  function toggleAll(pool: PoolKey, allIds: string[]) {
+    const ids = pool === 'drafts' ? allIds.filter(id => { const d = drafts.find((x: Draft) => x.id === id); return !d || !draftIsOtherLanguage(d); }) : allIds;
     const keys = ids.map(id => itemKey(pool, id));
     const allSelected = keys.every(k => selected.has(k));
     setSelected(prev => {
@@ -127,7 +138,7 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
         if (selected.has(key) && !items.some(i => i.id === post.id)) items.push(postToItem(post));
       }
       for (const draft of drafts) {
-        if (!selected.has(itemKey('drafts', draft.id))) continue;
+        if (!selected.has(itemKey('drafts', draft.id)) || draftIsOtherLanguage(draft)) continue;
         let photoSrc: string | undefined = draft.photoPreviewDataUrl;
         if (draft.photoDraftId) {
           const blob = await getDraftPhoto(draft.photoDraftId);
@@ -211,9 +222,10 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
     };
   }
 
-  function Section({ title, pool, ids, labelFor }: { title: string; pool: PoolKey; ids: string[]; labelFor: (id: string) => string }) {
+  function Section({ title, pool, ids, labelFor, blocked }: { title: string; pool: PoolKey; ids: string[]; labelFor: (id: string) => string; blocked?: (id: string) => boolean }) {
     if (ids.length === 0) return null;
-    const allSelected = ids.length > 0 && ids.every(id => selected.has(itemKey(pool, id)));
+    const usable = ids.filter(id => !blocked?.(id));
+    const allSelected = usable.length > 0 && usable.every(id => selected.has(itemKey(pool, id)));
     return (
       <div className="mb-5">
         <div className="flex items-center justify-between mb-2">
@@ -227,10 +239,20 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
             const key = itemKey(pool, id);
             return (
               <li key={key}>
-                <label className="flex items-center gap-2.5 text-sm text-ink-700 cursor-pointer">
-                  <input type="checkbox" checked={selected.has(key)} onChange={() => toggle(key)} className="accent-clay-600" />
-                  <span className="truncate">{labelFor(id)}</span>
-                </label>
+                {blocked?.(id) ? (
+                  <div className="text-sm text-ink-500">
+                    <label className="flex items-center gap-2.5 cursor-not-allowed opacity-70">
+                      <input type="checkbox" disabled checked={false} className="accent-clay-600" />
+                      <span className="truncate">{labelFor(id)}</span>
+                    </label>
+                    <p className="ml-6 text-xs">{t.booklet.draftOtherLanguage}</p>
+                  </div>
+                ) : (
+                  <label className="flex items-center gap-2.5 text-sm text-ink-700 cursor-pointer">
+                    <input type="checkbox" checked={selected.has(key)} onChange={() => toggle(key)} className="accent-clay-600" />
+                    <span className="truncate">{labelFor(id)}</span>
+                  </label>
+                )}
               </li>
             );
           })}
@@ -256,9 +278,9 @@ export default function BookletModal({ onClose }: { onClose: () => void }) {
           <p className="text-sm text-ink-500">{t.booklet.nothingToInclude}</p>
         ) : (
           <>
-            <Section title={t.myNouriva.sharedHeading} pool="shared" ids={sharedPosts.map(p => p.id)} labelFor={id => sharedPosts.find(p => p.id === id)?.dish_name || id} />
-            <Section title={t.booklet.likedHeading} pool="liked" ids={likedPosts.map(p => p.id)} labelFor={id => likedPosts.find(p => p.id === id)?.dish_name || id} />
-            <Section title={t.myNouriva.draftsHeading} pool="drafts" ids={drafts.map((d: Draft) => d.id)} labelFor={id => drafts.find((d: Draft) => d.id === id)?.dishName || t.booklet.untitledDraft} />
+            <Section title={t.myNouriva.sharedHeading} pool="shared" ids={sharedPosts.map(p => p.id)} labelFor={id => { const p = sharedPosts.find(x => x.id === id); return p ? localize(p).dish_name : id; }} />
+            <Section title={t.booklet.likedHeading} pool="liked" ids={likedPosts.map(p => p.id)} labelFor={id => { const p = likedPosts.find(x => x.id === id); return p ? localize(p).dish_name : id; }} />
+            <Section title={t.myNouriva.draftsHeading} pool="drafts" ids={drafts.map((d: Draft) => d.id)} labelFor={id => drafts.find((d: Draft) => d.id === id)?.dishName || t.booklet.untitledDraft} blocked={id => { const d = drafts.find((x: Draft) => x.id === id); return Boolean(d && draftIsOtherLanguage(d)); }} />
           </>
         )}
 
